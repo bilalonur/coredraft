@@ -1,0 +1,16 @@
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local dev tool config
+.mcp.json
+
+# Dependencies (if added later)
+node_modules/
