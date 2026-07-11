@@ -268,6 +268,17 @@ function drawStroke(c, obj) {
   }
 }
 
+// ── Image hit-test ───────────────────────────────────────
+function hitTestImage(wp) {
+  for (let i=history.length-1; i>=0; i--) {
+    const obj=history[i];
+    if (obj.type!=='image') continue;
+    if (wp.x>=obj.x && wp.x<=obj.x+obj.w &&
+        wp.y>=obj.y && wp.y<=obj.y+obj.h) return i;
+  }
+  return -1;
+}
+
 // ── Full redraw ───────────────────────────────────────────
 function fullRedraw() {
   const W=wrap.offsetWidth, H=wrap.offsetHeight;
@@ -280,6 +291,15 @@ function fullRedraw() {
   for (const obj of history) drawObject(ctx,obj);
   // Live shape preview
   if (shapeS && shapeE) drawShapePreview(ctx);
+  // Highlight image being dragged
+  if (dragImg) {
+    const o=dragImg.obj;
+    ctx.strokeStyle=isDark?'#c8a96e':'#8a6a2a';
+    ctx.lineWidth=2/vscale;
+    ctx.setLineDash([6/vscale,4/vscale]);
+    ctx.strokeRect(o.x,o.y,o.w,o.h);
+    ctx.setLineDash([]);
+  }
   ctx.restore();
   document.getElementById('zl').textContent = Math.round(vscale*100)+'%';
 }
@@ -366,18 +386,19 @@ let tool='draw', brushSize=3;
 let spaceDown=false, midDown=false, midStart=null;
 let isPanning=false, panStart=null;
 let textBold=false, textItalic=false, activeTN=null;
+let dragImg=null;   // {obj, ox, oy} — image being dragged
 
 const SHAPE_TOOLS = new Set(['arrow','line','rect','circle']);
 const CURSORS  = { draw:'crosshair', eraser:'cell', arrow:'crosshair', line:'crosshair', rect:'crosshair', circle:'crosshair', text:'text', pan:'grab' };
 const STATUSES = {
-  draw:   'Draw · Scroll to zoom · Space+drag or middle-click to pan',
+  draw:   'Draw · Scroll=zoom · Space/middle=pan',
   eraser: 'Eraser · Drag to erase',
   arrow:  'Arrow · Click & drag',
   line:   'Line · Click & drag',
   rect:   'Rectangle · Click & drag',
   circle: 'Circle / Ellipse · Click & drag',
   text:   'Text · Click to place · Double-click text to edit',
-  pan:    'Pan · Drag to move'
+  pan:    'Pan · Drag to move · Double-click image to relocate'
 };
 
 // Tool button ids: td=draw, te=eraser, tt=text, tp=pan, ta=arrow, tl=line, tr=rect, tc=circle
@@ -601,6 +622,13 @@ cv.addEventListener('mousedown',e=>{
   if(e.button===1||(e.button===0&&spaceDown)){ midDown=true; midStart={ox:panX-e.clientX,oy:panY-e.clientY}; cv.style.cursor='grabbing'; return; }
   if(e.button!==0)return;
   if(ti.style.display==='block' && tool!=='text') commitText();
+  // If an image was picked up via double-click, clicking drops it in place
+  if(dragImg){
+    if(dragImg.moved){future=[];syncUndoRedo();}
+    dragImg=null; cv.style.cursor=CURSORS[tool]; fullRedraw();
+    sb.textContent=STATUSES[tool]||'';
+    return;
+  }
   if      (tool==='pan')                   { isPanning=true; panStart={ox:panX-e.clientX,oy:panY-e.clientY}; cv.style.cursor='grabbing'; }
   else if (tool==='draw'||tool==='eraser') startStroke(wp);
   else if (SHAPE_TOOLS.has(tool))          { shapeS=wp; shapeE=wp; }
@@ -611,6 +639,7 @@ cv.addEventListener('mousemove',e=>{
   const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
   if(midDown)   { panX=e.clientX+midStart.ox; panY=e.clientY+midStart.oy; fullRedraw(); return; }
   if(isPanning) { panX=e.clientX+panStart.ox; panY=e.clientY+panStart.oy; fullRedraw(); return; }
+  if(dragImg)   { dragImg.obj.x=wp.x-dragImg.ox; dragImg.obj.y=wp.y-dragImg.oy; dragImg.moved=true; fullRedraw(); return; }
   if((tool==='draw'||tool==='eraser')&&isDrawing) continueStroke(wp);
   if(SHAPE_TOOLS.has(tool)&&shapeS) { shapeE=wp; fullRedraw(); }
 });
@@ -635,10 +664,22 @@ wrap.addEventListener('mousedown',e=>{
   if(e.target!==ti && activeTN && !justPlacedText) commitText();
 });
 
-// ── Double-click to edit text ────────────────────────────
+// ── Double-click to edit text / relocate image ─────────
 cv.addEventListener('dblclick',e=>{
   e.preventDefault();
   const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
+  // In pan mode, double-click an image to pick it up for relocation
+  if(tool==='pan'){
+    const imgIdx=hitTestImage(wp);
+    if(imgIdx!==-1){
+      const obj=history[imgIdx];
+      dragImg={obj,ox:wp.x-obj.x,oy:wp.y-obj.y,moved:false};
+      cv.style.cursor='grabbing';
+      sb.textContent='Image picked up · Move mouse to position · Click to drop';
+      fullRedraw();
+      return;
+    }
+  }
   const idx=hitTestText(wp);
   if(idx===-1) return;
   // Remove trivial click artifacts (dots, zero-size shapes) from the preceding clicks
@@ -766,11 +807,20 @@ function exportPDF(){
 }
 
 // ── Touch ─────────────────────────────────────────────────
-let lastTD=null;
+let lastTD=null, lastTapTime=0;
 cv.addEventListener('touchstart',e=>{
   e.preventDefault();
   if(e.touches.length===2){ lastTD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); return; }
   const t=e.touches[0]; const{sx,sy}=wXY(t); const wp=toWorld(sx,sy);
+  const now=Date.now();
+  // Drop image if one is being relocated
+  if(dragImg){ if(dragImg.moved){future=[];syncUndoRedo();} dragImg=null; fullRedraw(); return; }
+  // Double-tap on image in pan mode → pick up for relocation
+  if(tool==='pan' && now-lastTapTime<350){
+    const imgIdx=hitTestImage(wp);
+    if(imgIdx!==-1){ const obj=history[imgIdx]; dragImg={obj,ox:wp.x-obj.x,oy:wp.y-obj.y,moved:false}; fullRedraw(); return; }
+  }
+  lastTapTime=now;
   if(tool==='draw'||tool==='eraser')startStroke(wp);
   else if(SHAPE_TOOLS.has(tool)){shapeS=wp;shapeE=wp;}
 },{passive:false});
@@ -787,6 +837,7 @@ cv.addEventListener('touchmove',e=>{
     lastTD=d; return;
   }
   const t=e.touches[0]; const{sx,sy}=wXY(t); const wp=toWorld(sx,sy);
+  if(dragImg){ dragImg.obj.x=wp.x-dragImg.ox; dragImg.obj.y=wp.y-dragImg.oy; dragImg.moved=true; fullRedraw(); return; }
   if(tool==='draw'||tool==='eraser')continueStroke(wp);
   else if(SHAPE_TOOLS.has(tool)&&shapeS){shapeE=wp;fullRedraw();}
 },{passive:false});
