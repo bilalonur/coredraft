@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/coredraft_logo.png" alt="coredraft" width="480">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/coredraft_logo_dark.png">
+    <img src="assets/coredraft_logo.png" alt="coredraft" width="480">
+  </picture>
 </p>
 
 # coredraft
