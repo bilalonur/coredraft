@@ -1,132 +1,78 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>coredraft</title>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-:root {
-  --bg:#0e0e0e; --tb:#161616; --tbb:#2a2a2a;
-  --bh:#252525; --tx:#c8c4bc; --mu:#8a857d;
-  --ac:#c8a96e; --dg:#c0392b;
-}
-:root.light {
-  --bg:#f5f3ef; --tb:#efefec; --tbb:#d8d5d0;
-  --bh:#e4e2de; --tx:#2a2826; --mu:#9a9590;
-  --ac:#8a6a2a; --dg:#c0392b;
-}
-html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--tx);font-family:'Courier New',monospace;user-select:none;}
-
-#toolbar{position:fixed;top:0;left:0;right:0;height:52px;background:var(--tb);border-bottom:1px solid var(--tbb);display:flex;align-items:center;gap:2px;padding:0 10px;z-index:100;overflow-x:auto;}
-#toolbar::-webkit-scrollbar{display:none;}
-.tbg{display:flex;align-items:center;gap:1px;padding:0 5px;border-right:1px solid var(--tbb);flex-shrink:0;}
-.tbg:last-child{border-right:none;margin-left:auto;}
-
-.tb{background:transparent;border:1px solid transparent;color:var(--mu);cursor:pointer;padding:5px 7px;border-radius:5px;font-family:'Courier New',monospace;font-size:12px;transition:color .1s,background .1s,border-color .1s;display:flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0;}
-.tb:hover{color:var(--tx);background:var(--bh);}
-.tb.on{color:var(--ac);border-color:var(--tbb);background:var(--bh);}
-.tb svg{width:14px;height:14px;flex-shrink:0;}
-.tb:disabled{opacity:0.28;cursor:default;}
-.tb:disabled:hover{color:var(--mu);background:transparent;}
-
-/* undo/redo distinct style */
-.ud{padding:5px 6px;}
-
-.lbl{font-size:9px;color:var(--mu);text-transform:uppercase;letter-spacing:1px;padding:0 3px;flex-shrink:0;}
-.dot{width:18px;height:18px;border-radius:50%;border:2px solid transparent;cursor:pointer;flex-shrink:0;transition:transform .1s;}
-.dot:hover{transform:scale(1.18);}
-.dot.on{border-color:var(--tx);}
-
-#bsz{-webkit-appearance:none;width:64px;height:3px;background:var(--tbb);border-radius:2px;outline:none;cursor:pointer;flex-shrink:0;}
-#bsz::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--ac);cursor:pointer;}
-#fsz{width:52px;background:var(--bh);border:1px solid var(--tbb);color:var(--tx);font-family:'Courier New',monospace;font-size:12px;padding:4px 6px;border-radius:4px;text-align:center;flex-shrink:0;outline:none;}
-#fsz:focus{border-color:var(--ac);}
-#fsz::-webkit-inner-spin-button,#fsz::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
-#fsz{-moz-appearance:textfield;}
-#ffam{background:var(--bh);border:1px solid var(--tbb);color:var(--tx);font-family:'Courier New',monospace;font-size:12px;padding:4px 6px;border-radius:4px;cursor:pointer;outline:none;flex-shrink:0;}
-#ffam:focus{border-color:var(--ac);}
-
-.abtn{background:transparent;border:1px solid var(--tbb);color:var(--mu);cursor:pointer;padding:5px 11px;border-radius:5px;font-family:'Courier New',monospace;font-size:11px;transition:color .1s,border-color .1s;flex-shrink:0;}
-.abtn:hover{color:var(--tx);border-color:var(--tx);}
-.abtn.rst:hover{color:var(--dg);border-color:var(--dg);}
-.abtn.exp:hover{color:var(--ac);border-color:var(--ac);}
-
-#wrap{position:fixed;top:52px;left:0;right:0;bottom:0;overflow:hidden;}
-#c{position:absolute;top:0;left:0;cursor:crosshair;}
-#ti{position:fixed;background:transparent;border:none;outline:none;resize:none;padding:0;line-height:1.35;display:none;z-index:200;overflow:hidden;white-space:pre;}
-#sb{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);background:var(--tb);border:1px solid var(--tbb);border-radius:20px;padding:4px 14px;font-size:10px;color:var(--mu);pointer-events:none;z-index:100;white-space:nowrap;}
-#zc{position:fixed;bottom:10px;right:14px;display:flex;gap:3px;z-index:100;}
-#zc button{width:28px;height:28px;background:var(--tb);border:1px solid var(--tbb);color:var(--tx);border-radius:4px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;}
-#zc button:hover{background:var(--bh);}
-#zl{display:flex;align-items:center;background:var(--tb);border:1px solid var(--tbb);border-radius:4px;padding:0 7px;font-size:10px;color:var(--mu);font-family:'Courier New',monospace;min-width:44px;justify-content:center;}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>coredraft</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
 <div id="toolbar">
 
   <!-- Drawing tools -->
-  <div class="tbg">
-    <button class="tb on" id="td"  onclick="setTool('draw')"   title="Draw [D]">
+  <div class="toolbar-group">
+    <button class="toolbar-button on" id="tool-draw" onclick="setTool('draw')" title="Draw [D]">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.71 4.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>Draw
     </button>
-    <button class="tb" id="te"  onclick="setTool('eraser')" title="Eraser [E]">
+    <button class="toolbar-button" id="tool-eraser" onclick="setTool('eraser')" title="Eraser [E]">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l10-10 7 7-2.5 2.5"/><path d="M6.5 17.5l4-4"/></svg>Erase
     </button>
-    <button class="tb" id="tt"  onclick="setTool('text')"   title="Text [T]">
+    <button class="toolbar-button" id="tool-text" onclick="setTool('text')" title="Text [T]">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>Text
     </button>
-    <button class="tb" id="tp"  onclick="setTool('pan')"    title="Pan [P/Space]">
+    <button class="toolbar-button" id="tool-pan" onclick="setTool('pan')" title="Pan [P/Space]">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M6 14a2 2 0 0 0-2 2v2a6 6 0 0 0 6 6h4a6 6 0 0 0 6-6 5 5 0 0 0-5-5h-1v1"/></svg>Pan
     </button>
   </div>
 
   <!-- Shape tools -->
-  <div class="tbg">
-    <button class="tb" id="ta"  onclick="setTool('arrow')"  title="Arrow [A]">
+  <div class="toolbar-group">
+    <button class="toolbar-button" id="tool-arrow" onclick="setTool('arrow')" title="Arrow [A]">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="9 5 19 5 19 15"/></svg>Arrow
     </button>
-    <button class="tb" id="tl"  onclick="setTool('line')"   title="Line [L]">
+    <button class="toolbar-button" id="tool-line" onclick="setTool('line')" title="Line [L]">
       <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>Line
     </button>
-    <button class="tb" id="tr"  onclick="setTool('rect')"   title="Rectangle [R]">
+    <button class="toolbar-button" id="tool-rect" onclick="setTool('rect')" title="Rectangle [R]">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="1.5"/></svg>Rect
     </button>
-    <button class="tb" id="tc"  onclick="setTool('circle')" title="Circle [C]">
+    <button class="toolbar-button" id="tool-circle" onclick="setTool('circle')" title="Circle [C]">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>Circle
     </button>
   </div>
 
   <!-- Color palette -->
-  <div class="tbg" id="pal"><span class="lbl">Color</span></div>
+  <div class="toolbar-group" id="color-palette">
+    <span class="toolbar-label">Color</span>
+  </div>
 
   <!-- Brush size -->
-  <div class="tbg">
-    <span class="lbl">Size</span>
-    <input type="range" id="bsz" min="1" max="40" value="3">
+  <div class="toolbar-group">
+    <span class="toolbar-label">Size</span>
+    <input type="range" id="brush-size" min="1" max="40" value="3">
   </div>
 
   <!-- Text options -->
-  <div class="tbg">
-    <span class="lbl">Text</span>
-    <select id="ffam" onchange="updTS()">
+  <div class="toolbar-group">
+    <span class="toolbar-label">Text</span>
+    <select id="font-family" onchange="updateTextStyle()">
       <option value="'Courier New',monospace">Mono</option>
       <option value="Arial,sans-serif">Arial</option>
     </select>
-    <input type="number" id="fsz" value="18" min="8" max="120" onchange="updTS()">
-    <button class="tb" id="bb" onclick="togBold()"   style="font-weight:700">B</button>
-    <button class="tb" id="ib" onclick="togItalic()" style="font-style:italic">I</button>
+    <input type="number" id="font-size" value="18" min="8" max="120" onchange="updateTextStyle()">
+    <button class="toolbar-button" id="bold-button" onclick="toggleBold()" style="font-weight:700">B</button>
+    <button class="toolbar-button" id="italic-button" onclick="toggleItalic()" style="font-style:italic">I</button>
   </div>
 
   <!-- Undo / Redo -->
-  <div class="tbg">
-    <button class="tb ud" id="undobtn" onclick="undo()" title="Undo [Ctrl+Z]" disabled>
+  <div class="toolbar-group">
+    <button class="toolbar-button undo-redo-button" id="undo-button" onclick="undo()" title="Undo [Ctrl+Z]" disabled>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 7v6h6"/><path d="M3 13C5 7.5 10 4 15.5 4A9 9 0 0 1 21 19.5"/>
       </svg>
     </button>
-    <button class="tb ud" id="redobtn" onclick="redo()" title="Redo [Ctrl+Y / Ctrl+Shift+Z]" disabled>
+    <button class="toolbar-button undo-redo-button" id="redo-button" onclick="redo()" title="Redo [Ctrl+Y / Ctrl+Shift+Z]" disabled>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 7v6h-6"/><path d="M21 13C19 7.5 14 4 8.5 4A9 9 0 0 0 3 19.5"/>
       </svg>
@@ -134,728 +80,26 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(
   </div>
 
   <!-- Actions -->
-  <div class="tbg">
-    <button class="tb" onclick="toggleTheme()" title="Dark/Light">
+  <div class="toolbar-group">
+    <button class="toolbar-button" onclick="toggleTheme()" title="Dark/Light">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.33 5.33 0 0 1-5.3-5.3 5.39 5.39 0 0 1 2.26-4.4C13 3.04 12.54 3 12 3z"/></svg>Mode
     </button>
-    <button class="abtn rst" onclick="resetCanvas()">Reset</button>
-    <button class="abtn exp" onclick="exportPNG()">Export PNG</button>
-    <button class="abtn exp" onclick="exportPDF()">Export PDF</button>
+    <button class="action-button reset" onclick="resetCanvas()">Reset</button>
+    <button class="action-button export" onclick="exportPNG()">Export PNG</button>
+    <button class="action-button export" onclick="exportPDF()">Export PDF</button>
   </div>
 
 </div>
 
-<div id="wrap"><canvas id="c"></canvas></div>
-<textarea id="ti" spellcheck="false"></textarea>
-<div id="sb">Draw · Paste images with Ctrl+V</div>
-<div id="zc">
-  <button onclick="adjZ(-0.15)">−</button>
-  <div id="zl">100%</div>
-  <button onclick="adjZ(+0.15)">+</button>
+<div id="canvas-wrap"><canvas id="canvas"></canvas></div>
+<textarea id="text-input" spellcheck="false"></textarea>
+<div id="status-bar">Draw · Paste images with Ctrl+V</div>
+<div id="zoom-controls">
+  <button onclick="adjustZoom(-0.15)">−</button>
+  <div id="zoom-level">100%</div>
+  <button onclick="adjustZoom(+0.15)">+</button>
 </div>
 
-<script>
-const DPR = window.devicePixelRatio || 1;
-const COLORS = ['#e8e0c8','#c8a96e','#e87c5a','#5ab0e8','#7de87a','#c87de8','#e8e85a','#e85a8b','#5ae8d4','#444444'];
-
-const wrap = document.getElementById('wrap');
-const cv   = document.getElementById('c');
-const ctx  = cv.getContext('2d');
-const ti   = document.getElementById('ti');
-const sb   = document.getElementById('sb');
-
-let isDark = true;
-let panX = 0, panY = 0, vscale = 1;
-
-// ── Canvas sizing ─────────────────────────────────────────
-function resizeCanvas() {
-  const W = wrap.offsetWidth, H = wrap.offsetHeight;
-  cv.style.width = W+'px'; cv.style.height = H+'px';
-  cv.width = W*DPR; cv.height = H*DPR;
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-}
-function initView() {
-  resizeCanvas();
-  vscale = 1;
-  panX = wrap.offsetWidth/2;
-  panY = wrap.offsetHeight/2;
-  fullRedraw();
-}
-window.addEventListener('resize', ()=>{ resizeCanvas(); fullRedraw(); });
-
-function toWorld(sx,sy){ return {x:(sx-panX)/vscale, y:(sy-panY)/vscale}; }
-
-// ════════════════════════════════════════════════════════
-// HISTORY + UNDO / REDO
-// ════════════════════════════════════════════════════════
-let history = [];   // committed objects
-let future  = [];   // objects popped by undo, available for redo
-
-function pushHistory(obj) {
-  history.push(obj);
-  future = [];        // new action clears redo stack
-  syncUndoRedo();
-}
-
-function undo() {
-  if (!history.length) return;
-  future.push(history.pop());
-  syncUndoRedo();
-  fullRedraw();
-}
-
-function redo() {
-  if (!future.length) return;
-  history.push(future.pop());
-  syncUndoRedo();
-  fullRedraw();
-}
-
-function syncUndoRedo() {
-  const ub = document.getElementById('undobtn');
-  const rb = document.getElementById('redobtn');
-  ub.disabled = history.length === 0;
-  rb.disabled = future.length  === 0;
-  // Dim via opacity is handled by CSS :disabled
-}
-
-// ── Draw all history onto any context ────────────────────
-function drawObject(c, obj) {
-  c.save();
-  if (obj.type === 'stroke') {
-    drawStroke(c, obj);
-  } else if (obj.type === 'arrow') {
-    drawArrowShape(c, obj.x1,obj.y1,obj.x2,obj.y2, obj.color, obj.size);
-  } else if (obj.type === 'line') {
-    const lw = Math.max(1, obj.size*0.75);
-    c.strokeStyle=obj.color; c.lineWidth=lw; c.lineCap='round';
-    c.beginPath(); c.moveTo(obj.x1,obj.y1); c.lineTo(obj.x2,obj.y2); c.stroke();
-  } else if (obj.type === 'rect') {
-    const lw = Math.max(1, obj.size*0.75);
-    c.strokeStyle=obj.color; c.lineWidth=lw; c.lineJoin='round';
-    c.strokeRect(obj.x1, obj.y1, obj.x2-obj.x1, obj.y2-obj.y1);
-  } else if (obj.type === 'circle') {
-    const lw = Math.max(1, obj.size*0.75);
-    const cx=(obj.x1+obj.x2)/2, cy=(obj.y1+obj.y2)/2;
-    const rx=Math.abs(obj.x2-obj.x1)/2, ry=Math.abs(obj.y2-obj.y1)/2;
-    c.strokeStyle=obj.color; c.lineWidth=lw;
-    c.beginPath(); c.ellipse(cx,cy,rx,ry,0,0,Math.PI*2); c.stroke();
-  } else if (obj.type === 'text') {
-    c.font=obj.font; c.fillStyle=obj.color; c.textBaseline='top';
-    obj.lines.forEach((line,i)=>{ c.fillText(line, obj.x, obj.y+i*obj.lineH); });
-  } else if (obj.type === 'image') {
-    c.drawImage(obj.img, obj.x,obj.y,obj.w,obj.h);
-  }
-  c.restore();
-}
-
-function drawStroke(c, obj) {
-  const pts = obj.pts;
-  if (!pts||pts.length===0) return;
-  // Eraser paints the background color — never destination-out.
-  // destination-out punches transparent holes that show white in exports
-  // and through the canvas element. Painting bg color is always correct.
-  const color = obj.isErase ? (isDark ? '#0e0e0e' : '#f5f3ef') : obj.color;
-  c.lineCap='round'; c.lineJoin='round';
-  c.strokeStyle = color;
-  if (pts.length===1) {
-    c.beginPath(); c.arc(pts[0].x,pts[0].y,pts[0].w/2,0,Math.PI*2);
-    c.fillStyle = color; c.fill();
-  } else {
-    for (let i=1; i<pts.length; i++) {
-      const p0=pts[Math.max(0,i-2)], p1=pts[i-1], p2=pts[i], p3=pts[Math.min(pts.length-1,i+1)];
-      const cp1x=p1.x+(p2.x-p0.x)/6, cp1y=p1.y+(p2.y-p0.y)/6;
-      const cp2x=p2.x-(p3.x-p1.x)/6, cp2y=p2.y-(p3.y-p1.y)/6;
-      c.lineWidth=p1.w;
-      c.beginPath(); c.moveTo(p1.x,p1.y); c.bezierCurveTo(cp1x,cp1y,cp2x,cp2y,p2.x,p2.y); c.stroke();
-    }
-  }
-}
-
-// ── Image hit-test ───────────────────────────────────────
-function hitTestImage(wp) {
-  for (let i=history.length-1; i>=0; i--) {
-    const obj=history[i];
-    if (obj.type!=='image') continue;
-    if (wp.x>=obj.x && wp.x<=obj.x+obj.w &&
-        wp.y>=obj.y && wp.y<=obj.y+obj.h) return i;
-  }
-  return -1;
-}
-
-// ── Full redraw ───────────────────────────────────────────
-function fullRedraw() {
-  const W=wrap.offsetWidth, H=wrap.offsetHeight;
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle = isDark ? '#0e0e0e' : '#f5f3ef';
-  ctx.fillRect(0,0,W,H);
-  ctx.save();
-  ctx.translate(panX,panY);
-  ctx.scale(vscale,vscale);
-  for (const obj of history) drawObject(ctx,obj);
-  // Live shape preview
-  if (shapeS && shapeE) drawShapePreview(ctx);
-  // Highlight image being dragged
-  if (dragImg) {
-    const o=dragImg.obj;
-    ctx.strokeStyle=isDark?'#c8a96e':'#8a6a2a';
-    ctx.lineWidth=2/vscale;
-    ctx.setLineDash([6/vscale,4/vscale]);
-    ctx.strokeRect(o.x,o.y,o.w,o.h);
-    ctx.setLineDash([]);
-  }
-  ctx.restore();
-  document.getElementById('zl').textContent = Math.round(vscale*100)+'%';
-}
-
-// ── Arrow ─────────────────────────────────────────────────
-function drawArrowShape(c,x1,y1,x2,y2,color,size) {
-  const dx=x2-x1,dy=y2-y1;
-  if (Math.sqrt(dx*dx+dy*dy)<2) return;
-  const angle=Math.atan2(dy,dx);
-  const headLen=Math.max(14,size*5);
-  const lw=Math.max(1.5,size*0.75);
-  const ex=x2-Math.cos(angle)*(headLen*0.45+lw/2);
-  const ey=y2-Math.sin(angle)*(headLen*0.45+lw/2);
-  c.strokeStyle=color; c.fillStyle=color; c.lineWidth=lw; c.lineCap='round'; c.lineJoin='round';
-  c.beginPath(); c.moveTo(x1,y1); c.lineTo(ex,ey); c.stroke();
-  c.beginPath();
-  c.moveTo(x2,y2);
-  c.lineTo(x2-headLen*Math.cos(angle-Math.PI/7),y2-headLen*Math.sin(angle-Math.PI/7));
-  c.lineTo(x2-headLen*Math.cos(angle+Math.PI/7),y2-headLen*Math.sin(angle+Math.PI/7));
-  c.closePath(); c.fill();
-}
-
-// ── Shape preview (live drag) ─────────────────────────────
-let shapeS=null, shapeE=null;
-
-function drawShapePreview(c) {
-  c.save();
-  const color=drawColor, size=brushSize;
-  const lw=Math.max(1,size*0.75);
-  // Dashed preview style
-  c.setLineDash([6/vscale,4/vscale]);
-  c.strokeStyle=color; c.fillStyle=color; c.lineWidth=lw; c.lineCap='round'; c.lineJoin='round';
-
-  if (tool==='arrow') {
-    c.setLineDash([]);
-    drawArrowShape(c,shapeS.x,shapeS.y,shapeE.x,shapeE.y,color,size);
-  } else if (tool==='line') {
-    c.beginPath(); c.moveTo(shapeS.x,shapeS.y); c.lineTo(shapeE.x,shapeE.y); c.stroke();
-  } else if (tool==='rect') {
-    c.strokeRect(shapeS.x,shapeS.y,shapeE.x-shapeS.x,shapeE.y-shapeS.y);
-  } else if (tool==='circle') {
-    const cx=(shapeS.x+shapeE.x)/2, cy=(shapeS.y+shapeE.y)/2;
-    const rx=Math.abs(shapeE.x-shapeS.x)/2, ry=Math.abs(shapeE.y-shapeS.y)/2;
-    c.beginPath(); c.ellipse(cx,cy,rx,ry,0,0,Math.PI*2); c.stroke();
-  }
-  c.restore();
-}
-
-function commitShape() {
-  const obj = {
-    color: drawColor, size: brushSize,
-    x1: shapeS.x, y1: shapeS.y, x2: shapeE.x, y2: shapeE.y
-  };
-  if (tool==='arrow')  obj.type='arrow';
-  else if (tool==='line')   obj.type='line';
-  else if (tool==='rect')   obj.type='rect';
-  else if (tool==='circle') obj.type='circle';
-  pushHistory(obj);
-  shapeS=null; shapeE=null;
-  fullRedraw();
-}
-
-// ── Theme ─────────────────────────────────────────────────
-function toggleTheme() {
-  isDark=!isDark;
-  document.documentElement.classList.toggle('light',!isDark);
-  fullRedraw();
-}
-
-// ── Palette ───────────────────────────────────────────────
-let drawColor=COLORS[0];
-const pal=document.getElementById('pal');
-COLORS.forEach((c,i)=>{
-  const d=document.createElement('div');
-  d.className='dot'+(i===0?' on':'');
-  d.style.background=c;
-  d.style.boxShadow='0 0 0 1px #555';
-  d.onclick=()=>{ document.querySelectorAll('.dot').forEach(x=>x.classList.remove('on')); d.classList.add('on'); drawColor=c; updTS(); };
-  pal.appendChild(d);
-});
-
-// ── Tool state ────────────────────────────────────────────
-let tool='draw', brushSize=3;
-let spaceDown=false, midDown=false, midStart=null;
-let isPanning=false, panStart=null;
-let textBold=false, textItalic=false, activeTN=null;
-let dragImg=null;   // {obj, ox, oy} — image being dragged
-
-const SHAPE_TOOLS = new Set(['arrow','line','rect','circle']);
-const CURSORS  = { draw:'crosshair', eraser:'cell', arrow:'crosshair', line:'crosshair', rect:'crosshair', circle:'crosshair', text:'text', pan:'grab' };
-const STATUSES = {
-  draw:   'Draw · Scroll=zoom · Space/middle=pan',
-  eraser: 'Eraser · Drag to erase',
-  arrow:  'Arrow · Click & drag',
-  line:   'Line · Click & drag',
-  rect:   'Rectangle · Click & drag',
-  circle: 'Circle / Ellipse · Click & drag',
-  text:   'Text · Click to place · Double-click text to edit',
-  pan:    'Pan · Drag to move · Double-click image to relocate'
-};
-
-// Tool button ids: td=draw, te=eraser, tt=text, tp=pan, ta=arrow, tl=line, tr=rect, tc=circle
-const TOOL_BTN = { draw:'td', eraser:'te', text:'tt', pan:'tp', arrow:'ta', line:'tl', rect:'tr', circle:'tc' };
-
-function setTool(t) {
-  commitText();
-  tool=t;
-  Object.entries(TOOL_BTN).forEach(([k,id])=>{ const el=document.getElementById(id); if(el) el.classList.toggle('on',k===t); });
-  cv.style.cursor=CURSORS[t]||'crosshair';
-  sb.textContent=STATUSES[t]||'';
-}
-
-document.getElementById('bsz').addEventListener('input', e=>{ brushSize=+e.target.value; });
-
-// ── Stroke engine ─────────────────────────────────────────
-let pts=[], lastVel=0, isDrawing=false, currentStroke=null;
-
-function sW(vel,size) {
-  if (tool==='eraser') return size*7;
-  const mn=Math.max(0.5,size*0.38);
-  return size-(size-mn)*Math.min(vel,20)/20;
-}
-
-function startStroke(wp) {
-  isDrawing=true;
-  pts=[{x:wp.x,y:wp.y,w:sW(0,brushSize),t:Date.now()}];
-  lastVel=0;
-  currentStroke={type:'stroke',color:drawColor,size:brushSize,isErase:tool==='eraser',pts};
-}
-
-function continueStroke(wp) {
-  if (!isDrawing) return;
-  const prev=pts[pts.length-1];
-  const dx=wp.x-prev.x, dy=wp.y-prev.y;
-  const vel=Math.sqrt(dx*dx+dy*dy)/Math.max(1,Date.now()-prev.t)*10;
-  lastVel=lastVel*0.5+vel*0.5;
-  pts.push({x:wp.x,y:wp.y,w:sW(lastVel,brushSize),t:Date.now()});
-
-  if (tool==='eraser') {
-    // Paint bg color directly on screen canvas — fast, no fullRedraw needed,
-    // and never punches a transparent hole.
-    const bgColor = isDark ? '#0e0e0e' : '#f5f3ef';
-    const n=pts.length; if (n<2) return;
-    const p0=pts[Math.max(0,n-4)], p1=pts[n-3]||pts[0], p2=pts[n-2], p3=pts[n-1];
-    const cp1x=p1.x+(p2.x-p0.x)/6, cp1y=p1.y+(p2.y-p0.y)/6;
-    const cp2x=p2.x-(p3.x-p1.x)/6, cp2y=p2.y-(p3.y-p1.y)/6;
-    const sx1=p1.x*vscale+panX, sy1=p1.y*vscale+panY;
-    const sx2=p2.x*vscale+panX, sy2=p2.y*vscale+panY;
-    const scp1x=cp1x*vscale+panX, scp1y=cp1y*vscale+panY;
-    const scp2x=cp2x*vscale+panX, scp2y=cp2y*vscale+panY;
-    ctx.strokeStyle=bgColor;
-    ctx.lineWidth=p2.w*vscale; ctx.lineCap='round'; ctx.lineJoin='round';
-    ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.bezierCurveTo(scp1x,scp1y,scp2x,scp2y,sx2,sy2); ctx.stroke();
-    return;
-  }
-
-  // Draw tool: fast direct screen-space path, no fullRedraw cost per segment
-  const n=pts.length; if (n<3) return;
-  const p0=pts[Math.max(0,n-4)], p1=pts[n-3], p2=pts[n-2], p3=pts[n-1];
-  const cp1x=p1.x+(p2.x-p0.x)/6, cp1y=p1.y+(p2.y-p0.y)/6;
-  const cp2x=p2.x-(p3.x-p1.x)/6, cp2y=p2.y-(p3.y-p1.y)/6;
-
-  const sx1=p1.x*vscale+panX, sy1=p1.y*vscale+panY;
-  const sx2=p2.x*vscale+panX, sy2=p2.y*vscale+panY;
-  const scp1x=cp1x*vscale+panX, scp1y=cp1y*vscale+panY;
-  const scp2x=cp2x*vscale+panX, scp2y=cp2y*vscale+panY;
-
-  ctx.strokeStyle=drawColor;
-  ctx.lineWidth=p1.w*vscale; ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.beginPath(); ctx.moveTo(sx1,sy1); ctx.bezierCurveTo(scp1x,scp1y,scp2x,scp2y,sx2,sy2); ctx.stroke();
-}
-
-function endStroke(wp) {
-  if (!isDrawing) return;
-  isDrawing=false;
-  if (pts.length<=1) { const p=pts[0]||wp; if(!currentStroke.pts.length) currentStroke.pts.push({x:p.x,y:p.y,w:sW(0,brushSize)}); }
-  pushHistory(currentStroke);
-  currentStroke=null; pts=[]; lastVel=0;
-  fullRedraw();
-}
-
-// ── Text ──────────────────────────────────────────────────
-function getTS() {
-  const sz=parseInt(document.getElementById('fsz').value)||18;
-  const fam=document.getElementById('ffam').value;
-  const b=textBold?'bold ':'', iv=textItalic?'italic ':'';
-  return {sz,fam,css:`${iv}${b}${sz}px ${fam}`,lineH:sz*1.4};
-}
-function updTS() { if(ti.style.display!=='block')return; const s=getTS(); ti.style.font=s.css; ti.style.color=drawColor; autoR(); }
-function togBold()   { textBold=!textBold;   document.getElementById('bb').classList.toggle('on',textBold);   updTS(); }
-function togItalic() { textItalic=!textItalic; document.getElementById('ib').classList.toggle('on',textItalic); updTS(); }
-
-let justPlacedText = false;
-function placeText(sx,sy) {
-  // Commit any existing text before placing new
-  commitText();
-  const r=wrap.getBoundingClientRect();
-  const wp=toWorld(sx,sy), s=getTS();
-  ti.style.left=(r.left+sx)+'px'; ti.style.top=(r.top+sy)+'px';
-  ti.style.font=s.css; ti.style.color=drawColor;
-  ti.style.transform=`scale(${vscale})`; ti.style.transformOrigin='top left';
-  ti.value=''; ti.style.width='4px'; ti.style.height=s.sz*1.4+'px';
-  ti.style.display='block';
-  ti.focus();
-  activeTN={wp};
-  justPlacedText=true;
-  requestAnimationFrame(()=>{ justPlacedText=false; });
-}
-
-// ── Edit existing text ───────────────────────────────────
-function hitTestText(wp) {
-  for (let i=history.length-1; i>=0; i--) {
-    const obj=history[i];
-    if (obj.type!=='text') continue;
-    ctx.save(); ctx.font=obj.font;
-    let maxW=0;
-    for (const line of obj.lines) maxW=Math.max(maxW,ctx.measureText(line).width);
-    ctx.restore();
-    const h=obj.lines.length*obj.lineH;
-    const pad=6;
-    if (wp.x>=obj.x-pad && wp.x<=obj.x+maxW+pad &&
-        wp.y>=obj.y-pad && wp.y<=obj.y+h+pad) return i;
-  }
-  return -1;
-}
-
-function isTrivialAction(obj) {
-  if (!obj) return false;
-  if (obj.type==='stroke') return obj.pts.length<=2;
-  if (obj.type==='line'||obj.type==='rect'||obj.type==='circle'||obj.type==='arrow')
-    return Math.abs(obj.x2-obj.x1)<4 && Math.abs(obj.y2-obj.y1)<4;
-  return false;
-}
-
-function editText(idx) {
-  commitText();
-  const obj=history[idx];
-  if (!obj||obj.type!=='text') return;
-  const sx=obj.x*vscale+panX, sy=obj.y*vscale+panY;
-  const r=wrap.getBoundingClientRect();
-  ti.style.left=(r.left+sx)+'px'; ti.style.top=(r.top+sy)+'px';
-  ti.style.font=obj.font; ti.style.color=obj.color;
-  ti.style.transform=`scale(${vscale})`; ti.style.transformOrigin='top left';
-  ti.value=obj.lines.join('\n');
-  ti.style.display='block';
-  ti.focus();
-  ti.setSelectionRange(ti.value.length,ti.value.length);
-  // Sync toolbar style controls with the text being edited
-  const szM=obj.font.match(/(\d+)px/);
-  if (szM) document.getElementById('fsz').value=szM[1];
-  textBold=/bold/i.test(obj.font);
-  document.getElementById('bb').classList.toggle('on',textBold);
-  textItalic=/italic/i.test(obj.font);
-  document.getElementById('ib').classList.toggle('on',textItalic);
-  const famM=obj.font.match(/\d+px\s+(.+)/);
-  if (famM) {
-    const ffam=document.getElementById('ffam');
-    for (const opt of ffam.options) { if (opt.value===famM[1]) { ffam.value=famM[1]; break; } }
-  }
-  drawColor=obj.color;
-  activeTN={wp:{x:obj.x,y:obj.y},editIndex:idx};
-  autoR();
-  justPlacedText=true;
-  requestAnimationFrame(()=>{ justPlacedText=false; });
-}
-
-function autoR(){ ti.style.width='4px'; ti.style.width=ti.scrollWidth+'px'; ti.style.height='0'; ti.style.height=ti.scrollHeight+'px'; }
-ti.addEventListener('input',autoR);
-ti.addEventListener('keydown',e=>{ if(e.key==='Escape')commitText(); });
-
-function commitText() {
-  if(!activeTN||ti.style.display==='none')return;
-  const val=ti.value;
-  const s=getTS();
-  if(val.trim()){
-    if(activeTN.editIndex!==undefined){
-      // Update existing text object in place
-      const obj=history[activeTN.editIndex];
-      obj.lines=val.split('\n'); obj.color=drawColor;
-      obj.font=s.css; obj.lineH=s.lineH;
-      future=[]; syncUndoRedo(); fullRedraw();
-    } else {
-      pushHistory({type:'text',color:drawColor,font:s.css,lineH:s.lineH,x:activeTN.wp.x,y:activeTN.wp.y,lines:val.split('\n')});
-      fullRedraw();
-    }
-  } else if(activeTN.editIndex!==undefined){
-    // Editing produced empty text — remove the original
-    history.splice(activeTN.editIndex,1);
-    future=[]; syncUndoRedo(); fullRedraw();
-  }
-  ti.style.display='none'; ti.value=''; activeTN=null;
-}
-
-// ── Paste image ───────────────────────────────────────────
-document.addEventListener('paste',e=>{
-  const items=e.clipboardData?.items; if(!items)return;
-  for(const item of items){
-    if(!item.type.startsWith('image/'))continue;
-    const url=URL.createObjectURL(item.getAsFile());
-    const img=new Image();
-    img.onload=()=>{
-      const cx=(wrap.offsetWidth/2-panX)/vscale, cy=(wrap.offsetHeight/2-panY)/vscale;
-      const sc=Math.min(img.width,3000)/img.width;
-      const w=img.width*sc, h=img.height*sc;
-      pushHistory({type:'image',img,x:cx-w/2,y:cy-h/2,w,h});
-      URL.revokeObjectURL(url); fullRedraw();
-      sb.textContent='Image pasted ✓';
-      setTimeout(()=>{ sb.textContent=STATUSES[tool]||''; },2000);
-    };
-    img.src=url; break;
-  }
-});
-
-// ── Pointer events ────────────────────────────────────────
-function wXY(e){ const r=wrap.getBoundingClientRect(); return{sx:e.clientX-r.left,sy:e.clientY-r.top}; }
-
-cv.addEventListener('mousedown',e=>{
-  e.preventDefault();
-  const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
-  if(e.button===1||(e.button===0&&spaceDown)){ midDown=true; midStart={ox:panX-e.clientX,oy:panY-e.clientY}; cv.style.cursor='grabbing'; return; }
-  if(e.button!==0)return;
-  if(ti.style.display==='block' && tool!=='text') commitText();
-  // If an image was picked up via double-click, clicking drops it in place
-  if(dragImg){
-    if(dragImg.moved){future=[];syncUndoRedo();}
-    dragImg=null; cv.style.cursor=CURSORS[tool]; fullRedraw();
-    sb.textContent=STATUSES[tool]||'';
-    return;
-  }
-  if      (tool==='pan')                   { isPanning=true; panStart={ox:panX-e.clientX,oy:panY-e.clientY}; cv.style.cursor='grabbing'; }
-  else if (tool==='draw'||tool==='eraser') startStroke(wp);
-  else if (SHAPE_TOOLS.has(tool))          { shapeS=wp; shapeE=wp; }
-  else if (tool==='text')                  placeText(sx,sy);
-});
-
-cv.addEventListener('mousemove',e=>{
-  const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
-  if(midDown)   { panX=e.clientX+midStart.ox; panY=e.clientY+midStart.oy; fullRedraw(); return; }
-  if(isPanning) { panX=e.clientX+panStart.ox; panY=e.clientY+panStart.oy; fullRedraw(); return; }
-  if(dragImg)   { dragImg.obj.x=wp.x-dragImg.ox; dragImg.obj.y=wp.y-dragImg.oy; dragImg.moved=true; fullRedraw(); return; }
-  if((tool==='draw'||tool==='eraser')&&isDrawing) continueStroke(wp);
-  if(SHAPE_TOOLS.has(tool)&&shapeS) { shapeE=wp; fullRedraw(); }
-});
-
-cv.addEventListener('mouseup',e=>{
-  if(e.button===1||midDown){ midDown=false; cv.style.cursor=CURSORS[tool]; return; }
-  if(e.button!==0)return;
-  const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
-  if      (isPanning)                          { isPanning=false; cv.style.cursor=CURSORS[tool]; }
-  else if (tool==='draw'||tool==='eraser')     endStroke(wp);
-  else if (SHAPE_TOOLS.has(tool)&&shapeS)      { shapeE=wp; commitShape(); }
-});
-
-cv.addEventListener('mouseleave',e=>{
-  const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
-  if((tool==='draw'||tool==='eraser')&&isDrawing) endStroke(wp);
-  if(SHAPE_TOOLS.has(tool)&&shapeS){ shapeS=null; shapeE=null; fullRedraw(); }
-  midDown=false;
-});
-
-wrap.addEventListener('mousedown',e=>{
-  if(e.target!==ti && activeTN && !justPlacedText) commitText();
-});
-
-// ── Double-click to edit text / relocate image ─────────
-cv.addEventListener('dblclick',e=>{
-  e.preventDefault();
-  const{sx,sy}=wXY(e); const wp=toWorld(sx,sy);
-  // In pan mode, double-click an image to pick it up for relocation
-  if(tool==='pan'){
-    const imgIdx=hitTestImage(wp);
-    if(imgIdx!==-1){
-      const obj=history[imgIdx];
-      dragImg={obj,ox:wp.x-obj.x,oy:wp.y-obj.y,moved:false};
-      cv.style.cursor='grabbing';
-      sb.textContent='Image picked up · Move mouse to position · Click to drop';
-      fullRedraw();
-      return;
-    }
-  }
-  const idx=hitTestText(wp);
-  if(idx===-1) return;
-  // Remove trivial click artifacts (dots, zero-size shapes) from the preceding clicks
-  let removed=0;
-  while(removed<2 && history.length>0) {
-    if(isTrivialAction(history[history.length-1])) { future.push(history.pop()); removed++; }
-    else break;
-  }
-  if(removed>0) syncUndoRedo();
-  shapeS=null; shapeE=null;
-  editText(idx);
-});
-
-// ── Scroll zoom ───────────────────────────────────────────
-wrap.addEventListener('wheel',e=>{
-  e.preventDefault();
-  const{sx,sy}=wXY(e);
-  const f=e.deltaY<0?1.07:1/1.07;
-  const ns=Math.max(0.04,Math.min(10,vscale*f));
-  panX=sx-(sx-panX)*(ns/vscale); panY=sy-(sy-panY)*(ns/vscale); vscale=ns;
-  fullRedraw();
-},{passive:false});
-
-// ── Keyboard ──────────────────────────────────────────────
-document.addEventListener('keydown',e=>{
-  if(e.target===ti)return;
-
-  // Undo / Redo
-  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==='z'){ e.preventDefault(); undo(); return; }
-  if((e.ctrlKey||e.metaKey)&&e.key==='y'){               e.preventDefault(); redo(); return; }
-  if((e.ctrlKey||e.metaKey)&&e.shiftKey&&e.key==='Z'){   e.preventDefault(); redo(); return; }
-
-  if(e.ctrlKey||e.metaKey)return; // don't steal other ctrl shortcuts
-
-  if(e.code==='Space'){ e.preventDefault(); spaceDown=true; if(!isPanning&&!midDown)cv.style.cursor='grab'; }
-  if(e.key==='d')setTool('draw');
-  if(e.key==='e')setTool('eraser');
-  if(e.key==='a')setTool('arrow');
-  if(e.key==='l')setTool('line');
-  if(e.key==='r')setTool('rect');
-  if(e.key==='c')setTool('circle');
-  if(e.key==='t')setTool('text');
-  if(e.key==='p')setTool('pan');
-});
-document.addEventListener('keyup',e=>{
-  if(e.code==='Space'){ spaceDown=false; midDown=false; cv.style.cursor=CURSORS[tool]; }
-});
-
-// ── Zoom buttons ──────────────────────────────────────────
-function adjZ(d){
-  const cx=wrap.offsetWidth/2, cy=wrap.offsetHeight/2;
-  const ns=Math.max(0.04,Math.min(10,vscale+d));
-  panX=cx-(cx-panX)*(ns/vscale); panY=cy-(cy-panY)*(ns/vscale); vscale=ns;
-  fullRedraw();
-}
-
-// ── Reset ─────────────────────────────────────────────────
-function resetCanvas(){
-  if(!confirm('Clear everything?'))return;
-  commitText();
-  history=[]; future=[];
-  shapeS=null; shapeE=null;
-  syncUndoRedo();
-  vscale=1; initView();
-}
-
-// ── Export PNG ────────────────────────────────────────────
-// ── Shared render-to-canvas helper ───────────────────────
-function renderToCanvas(scale) {
-  commitText();
-  const EW=wrap.offsetWidth*scale, EH=wrap.offsetHeight*scale;
-  const exp=document.createElement('canvas');
-  exp.width=EW; exp.height=EH;
-  const ec=exp.getContext('2d');
-  ec.fillStyle=isDark?'#0e0e0e':'#f5f3ef';
-  ec.fillRect(0,0,EW,EH);
-  ec.save();
-  ec.translate(panX*scale,panY*scale);
-  ec.scale(vscale*scale,vscale*scale);
-  for(const obj of history)drawObject(ec,obj);
-  ec.restore();
-  return exp;
-}
-
-function exportPNG(){
-  const exp=renderToCanvas(2);
-  const a=document.createElement('a');
-  a.download='coredraft.png'; a.href=exp.toDataURL('image/png'); a.click();
-}
-
-function exportPDF(){
-  // Use the canvas as an image embedded in a PDF via a data URI.
-  // We use the browser's print dialog pointed at a minimal HTML page
-  // that contains the canvas image sized to fill the page — no library needed.
-  const exp=renderToCanvas(2);
-  const imgData=exp.toDataURL('image/png');
-  const W=wrap.offsetWidth, H=wrap.offsetHeight;
-  const isLandscape = W >= H;
-  const html=`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>coredraft</title>
-<style>
-  @page { size: ${isLandscape?'A4 landscape':'A4 portrait'}; margin: 0; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; background:${isDark?'#0e0e0e':'#f5f3ef'}; }
-  img { width:100%; height:100%; object-fit:contain; display:block; }
-</style>
-</head>
-<body>
-<img src="${imgData}">
-<script>
-  window.onload = function() {
-    setTimeout(function(){ window.print(); window.close(); }, 400);
-  };
-<\/script>
-</body>
-</html>`;
-  const blob=new Blob([html],{type:'text/html'});
-  const url=URL.createObjectURL(blob);
-  const win=window.open(url,'_blank','width=900,height=700');
-  if(!win){ alert('Please allow popups to export PDF.'); URL.revokeObjectURL(url); return; }
-  win.onbeforeunload=()=>URL.revokeObjectURL(url);
-}
-
-// ── Touch ─────────────────────────────────────────────────
-let lastTD=null, lastTapTime=0;
-cv.addEventListener('touchstart',e=>{
-  e.preventDefault();
-  if(e.touches.length===2){ lastTD=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); return; }
-  const t=e.touches[0]; const{sx,sy}=wXY(t); const wp=toWorld(sx,sy);
-  const now=Date.now();
-  // Drop image if one is being relocated
-  if(dragImg){ if(dragImg.moved){future=[];syncUndoRedo();} dragImg=null; fullRedraw(); return; }
-  // Double-tap on image in pan mode → pick up for relocation
-  if(tool==='pan' && now-lastTapTime<350){
-    const imgIdx=hitTestImage(wp);
-    if(imgIdx!==-1){ const obj=history[imgIdx]; dragImg={obj,ox:wp.x-obj.x,oy:wp.y-obj.y,moved:false}; fullRedraw(); return; }
-  }
-  lastTapTime=now;
-  if(tool==='draw'||tool==='eraser')startStroke(wp);
-  else if(SHAPE_TOOLS.has(tool)){shapeS=wp;shapeE=wp;}
-},{passive:false});
-
-cv.addEventListener('touchmove',e=>{
-  e.preventDefault();
-  if(e.touches.length===2){
-    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-    if(lastTD){
-      const mx=(e.touches[0].clientX+e.touches[1].clientX)/2, my=(e.touches[0].clientY+e.touches[1].clientY)/2;
-      const ns=Math.max(0.04,Math.min(10,vscale*d/lastTD));
-      panX=mx-(mx-panX)*(ns/vscale); panY=my-(my-panY)*(ns/vscale); vscale=ns; fullRedraw();
-    }
-    lastTD=d; return;
-  }
-  const t=e.touches[0]; const{sx,sy}=wXY(t); const wp=toWorld(sx,sy);
-  if(dragImg){ dragImg.obj.x=wp.x-dragImg.ox; dragImg.obj.y=wp.y-dragImg.oy; dragImg.moved=true; fullRedraw(); return; }
-  if(tool==='draw'||tool==='eraser')continueStroke(wp);
-  else if(SHAPE_TOOLS.has(tool)&&shapeS){shapeE=wp;fullRedraw();}
-},{passive:false});
-
-cv.addEventListener('touchend',e=>{
-  lastTD=null;
-  if(!e.changedTouches.length)return;
-  const t=e.changedTouches[0]; const{sx,sy}=wXY(t); const wp=toWorld(sx,sy);
-  if(tool==='draw'||tool==='eraser')endStroke(wp);
-  else if(SHAPE_TOOLS.has(tool)&&shapeS){shapeE=wp;commitShape();}
-});
-
-// ── Boot ──────────────────────────────────────────────────
-initView();
-</script>
+<script src="app.js"></script>
 </body>
 </html>
