@@ -1,0 +1,446 @@
+/* ============================================================
+   coredraft — styles
+   ============================================================ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0e0e0e;
+  --toolbar-bg: #161616;
+  --toolbar-border: #2a2a2a;
+  --button-hover: #252525;
+  --text: #c8c4bc;
+  --muted: #8a857d;
+  --accent: #c8a96e;
+  --danger: #c0392b;
+}
+
+:root.light {
+  --bg: #f5f3ef;
+  --toolbar-bg: #efefec;
+  --toolbar-border: #d8d5d0;
+  --button-hover: #e4e2de;
+  --text: #2a2826;
+  --muted: #9a9590;
+  --accent: #8a6a2a;
+  --danger: #c0392b;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  user-select: none;
+}
+
+/* ── Toolbar ─────────────────────────────────────────── */
+
+#toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 52px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--toolbar-border);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  z-index: 100;
+  overflow-x: auto;
+}
+
+#toolbar::-webkit-scrollbar { display: none; }
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 5px;
+  border-right: 1px solid var(--toolbar-border);
+  flex-shrink: 0;
+}
+
+.toolbar-group:last-child {
+  border-right: none;
+  margin-left: auto;
+}
+
+.toolbar-button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 5px 7px;
+  border-radius: 5px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  transition: color .1s, background .1s, border-color .1s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.toolbar-button:hover {
+  color: var(--text);
+  background: var(--button-hover);
+}
+
+.toolbar-button.on {
+  color: var(--accent);
+  border-color: var(--toolbar-border);
+  background: var(--button-hover);
+}
+
+.toolbar-button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.toolbar-button:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.toolbar-button:disabled:hover {
+  color: var(--muted);
+  background: transparent;
+}
+
+/* Undo/redo buttons get tighter padding */
+.undo-redo-button { padding: 5px 6px; }
+
+.toolbar-label {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 0 3px;
+  flex-shrink: 0;
+}
+
+/* ── Color palette ───────────────────────────────────── */
+
+.color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform .1s;
+}
+
+.color-dot:hover { transform: scale(1.18); }
+
+.color-dot.on { border-color: var(--text); }
+
+/* ── Brush size slider ───────────────────────────────── */
+
+#brush-size {
+  -webkit-appearance: none;
+  width: 64px;
+  height: 3px;
+  background: var(--toolbar-border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#brush-size::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+
+/* ── Text controls ───────────────────────────────────── */
+
+#font-size {
+  width: 52px;
+  background: var(--button-hover);
+  border: 1px solid var(--toolbar-border);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  text-align: center;
+  flex-shrink: 0;
+  outline: none;
+}
+
+#font-size:focus { border-color: var(--accent); }
+
+#font-size::-webkit-inner-spin-button,
+#font-size::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+#font-size { -moz-appearance: textfield; }
+
+#font-family {
+  background: var(--button-hover);
+  border: 1px solid var(--toolbar-border);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+}
+
+#font-family:focus { border-color: var(--accent); }
+
+/* ── Action buttons ──────────────────────────────────── */
+
+.action-button {
+  background: transparent;
+  border: 1px solid var(--toolbar-border);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 5px 11px;
+  border-radius: 5px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  transition: color .1s, border-color .1s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.action-button:hover {
+  color: var(--text);
+  border-color: var(--text);
+}
+
+.action-button.reset:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.action-button.export:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Export dropdown ─────────────────────────────────── */
+
+.export-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.export-dropdown .chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: 3px;
+  transition: transform .15s;
+}
+
+.export-dropdown.open .chevron {
+  transform: rotate(180deg);
+}
+
+.export-menu {
+  display: none;
+  position: fixed;
+  min-width: 150px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 5px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  padding: 4px;
+  z-index: 300;
+}
+
+.export-dropdown.open .export-menu {
+  display: block;
+}
+
+.export-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .1s, color .1s;
+}
+
+.export-menu button:hover {
+  background: var(--button-hover);
+  color: var(--accent);
+}
+
+/* ── Info card ───────────────────────────────────────── */
+
+#info-card {
+  position: fixed;
+  top: 58px;
+  left: 10px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  padding: 12px 14px;
+  z-index: 300;
+  display: none;
+  min-width: 220px;
+}
+
+#info-card.open {
+  display: block;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.info-row + .info-row {
+  margin-top: 8px;
+}
+
+.info-label {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  width: 56px;
+  flex-shrink: 0;
+}
+
+#info-name {
+  flex: 1;
+  background: var(--button-hover);
+  border: 1px solid var(--toolbar-border);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  outline: none;
+  min-width: 0;
+}
+
+#info-name:focus {
+  border-color: var(--accent);
+}
+
+#info-started {
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* ── Canvas area ─────────────────────────────────────── */
+
+#canvas-wrap {
+  position: fixed;
+  top: 52px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+#canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: crosshair;
+}
+
+#text-input {
+  position: fixed;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 0;
+  line-height: 1.35;
+  display: none;
+  z-index: 200;
+  overflow: hidden;
+  white-space: pre;
+}
+
+/* ── Status bar ──────────────────────────────────────── */
+
+#status-bar {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 20px;
+  padding: 4px 14px;
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+/* ── Zoom controls ───────────────────────────────────── */
+
+#zoom-controls {
+  position: fixed;
+  bottom: 10px;
+  right: 14px;
+  display: flex;
+  gap: 3px;
+  z-index: 100;
+}
+
+#zoom-controls button {
+  width: 28px;
+  height: 28px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#zoom-controls button:hover { background: var(--button-hover); }
+
+#zoom-level {
+  display: flex;
+  align-items: center;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 4px;
+  padding: 0 7px;
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'Courier New', monospace;
+  min-width: 44px;
+  justify-content: center;
+}
