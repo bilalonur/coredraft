@@ -10,6 +10,13 @@
 
 <div id="toolbar">
 
+  <!-- Info -->
+  <div class="toolbar-group" id="info-group">
+    <button class="toolbar-button" id="info-toggle" onclick="toggleInfoCard(event)" title="Canvas info">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </button>
+  </div>
+
   <!-- Drawing tools -->
   <div class="toolbar-group">
     <button class="toolbar-button on" id="tool-draw" onclick="setTool('draw')" title="Draw [D]">
@@ -85,10 +92,29 @@
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.33 5.33 0 0 1-5.3-5.3 5.39 5.39 0 0 1 2.26-4.4C13 3.04 12.54 3 12 3z"/></svg>Mode
     </button>
     <button class="action-button reset" onclick="resetCanvas()">Reset</button>
-    <button class="action-button export" onclick="exportPNG()">Export PNG</button>
-    <button class="action-button export" onclick="exportPDF()">Export PDF</button>
+    <div class="export-dropdown">
+      <button class="action-button export" id="export-toggle" onclick="toggleExportMenu(event)">
+        Export
+        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="export-menu" id="export-menu">
+        <button onclick="exportPNG()">Export as PNG</button>
+        <button onclick="exportPDF()">Export as PDF</button>
+      </div>
+    </div>
   </div>
 
+</div>
+
+<div id="info-card">
+  <div class="info-row">
+    <span class="info-label">Name</span>
+    <input type="text" id="info-name" placeholder="Untitled" spellcheck="false" autocomplete="off">
+  </div>
+  <div class="info-row">
+    <span class="info-label">Started</span>
+    <span id="info-started"></span>
+  </div>
 </div>
 
 <div id="canvas-wrap"><canvas id="canvas"></canvas></div>

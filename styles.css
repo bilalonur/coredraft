@@ -218,6 +218,10 @@ html, body {
   font-size: 11px;
   transition: color .1s, border-color .1s;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
 }
 
 .action-button:hover {
@@ -233,6 +237,121 @@ html, body {
 .action-button.export:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* ── Export dropdown ─────────────────────────────────── */
+
+.export-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.export-dropdown .chevron {
+  width: 12px;
+  height: 12px;
+  margin-left: 3px;
+  transition: transform .15s;
+}
+
+.export-dropdown.open .chevron {
+  transform: rotate(180deg);
+}
+
+.export-menu {
+  display: none;
+  position: fixed;
+  min-width: 150px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 5px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  padding: 4px;
+  z-index: 300;
+}
+
+.export-dropdown.open .export-menu {
+  display: block;
+}
+
+.export-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .1s, color .1s;
+}
+
+.export-menu button:hover {
+  background: var(--button-hover);
+  color: var(--accent);
+}
+
+/* ── Info card ───────────────────────────────────────── */
+
+#info-card {
+  position: fixed;
+  top: 58px;
+  left: 10px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  padding: 12px 14px;
+  z-index: 300;
+  display: none;
+  min-width: 220px;
+}
+
+#info-card.open {
+  display: block;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.info-row + .info-row {
+  margin-top: 8px;
+}
+
+.info-label {
+  font-size: 9px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  width: 56px;
+  flex-shrink: 0;
+}
+
+#info-name {
+  flex: 1;
+  background: var(--button-hover);
+  border: 1px solid var(--toolbar-border);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  outline: none;
+  min-width: 0;
+}
+
+#info-name:focus {
+  border-color: var(--accent);
+}
+
+#info-started {
+  font-size: 12px;
+  color: var(--text);
 }
 
 /* ── Canvas area ─────────────────────────────────────── */

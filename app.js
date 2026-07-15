@@ -4,6 +4,7 @@
 
 const devicePixelRatio = window.devicePixelRatio || 1;
 const PALETTE_COLORS = ['#e8e0c8', '#c8a96e', '#e87c5a', '#5ab0e8', '#7de87a', '#c87de8', '#e8e85a', '#e85a8b', '#5ae8d4', '#444444'];
+const FALLBACK_WORDS = ['banaz', 'porsuk', 'aksu', 'anamur', 'biga', 'kali', 'maden', 'melen', 'meydan', 'munzur', 'sabun', 'sarisu', 'sariz', 'terme'];
 
 const canvasWrap = document.getElementById('canvas-wrap');
 const canvas = document.getElementById('canvas');
@@ -895,8 +896,118 @@ function resetCanvas() {
   initCanvasView();
 }
 
+// ── Export dropdown ───────────────────────────────────────
+const exportDropdown = document.querySelector('.export-dropdown');
+const exportMenu = document.getElementById('export-menu');
+
+function toggleExportMenu(e) {
+  e.stopPropagation();
+  const willOpen = !exportDropdown.classList.contains('open');
+  if (willOpen) {
+    // Position the menu below the button using fixed coordinates so it
+    // escapes the toolbar's overflow clipping and overlays the canvas.
+    const rect = document.getElementById('export-toggle').getBoundingClientRect();
+    exportMenu.style.left = (rect.right - 150) + 'px';   // right-align to button
+    exportMenu.style.top = (rect.bottom + 4) + 'px';      // 4px gap below button
+  }
+  exportDropdown.classList.toggle('open', willOpen);
+}
+
+function closeExportMenu() {
+  exportDropdown.classList.remove('open');
+}
+
+// Close the menu when clicking anywhere outside of it
+document.addEventListener('click', (e) => {
+  if (!exportDropdown.contains(e.target)) closeExportMenu();
+});
+
+// Close on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeExportMenu();
+});
+
+// ── Info card ─────────────────────────────────────────────
+const infoCard = document.getElementById('info-card');
+const infoName = document.getElementById('info-name');
+const infoStarted = document.getElementById('info-started');
+const infoToggle = document.getElementById('info-toggle');
+
+let canvasName = '';
+const canvasStartTime = new Date();
+
+function formatDateTime(date) {
+  return date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function toggleInfoCard(e) {
+  e.stopPropagation();
+  const willOpen = !infoCard.classList.contains('open');
+  infoCard.classList.toggle('open', willOpen);
+  infoToggle.classList.toggle('on', willOpen);
+  if (willOpen) {
+    infoName.value = canvasName;
+    infoStarted.textContent = formatDateTime(canvasStartTime);
+    setTimeout(() => infoName.focus(), 0);
+  }
+}
+
+function closeInfoCard() {
+  infoCard.classList.remove('open');
+  infoToggle.classList.remove('on');
+}
+
+// Save the name and close when focus leaves the name field
+infoName.addEventListener('blur', () => {
+  canvasName = infoName.value.trim();
+  closeInfoCard();
+});
+
+// Enter also saves and closes
+infoName.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); infoName.blur(); }
+  if (e.key === 'Escape') { e.preventDefault(); infoName.value = canvasName; infoName.blur(); }
+});
+
+// Close the info card when clicking anywhere outside of it
+document.addEventListener('click', (e) => {
+  if (infoCard.classList.contains('open') &&
+      !infoCard.contains(e.target) &&
+      !infoToggle.contains(e.target)) {
+    canvasName = infoName.value.trim();
+    closeInfoCard();
+  }
+});
+
+// Close on Escape (only when name field isn't focused — that has its own handler)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.activeElement !== infoName) closeInfoCard();
+});
+
 // ── Export PNG ────────────────────────────────────────────
 // ── Shared render-to-canvas helper ───────────────────────
+
+// Build a filename in the format: mm-dd-yyyy-hh-mm-<name>.png
+// If the user hasn't named the canvas, pick a random word + 3-digit number.
+function buildExportFilename() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${now.getFullYear()}-${pad(now.getHours())}-${pad(now.getMinutes())}`;
+  let name = canvasName.trim();
+  if (!name) {
+    const word = FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
+    const num = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+    name = `${word}-${num}`;
+  }
+  // Sanitize: keep alphanumerics and dashes only
+  name = name.replace(/[^a-zA-Z0-9-]/g, '').replace(/-+/g, '-');
+  if (!name) name = 'untitled';
+  return `${stamp}-${name}.png`;
+}
+
 function renderToCanvas(scale) {
   commitText();
   const exportWidth = canvasWrap.offsetWidth * scale;
@@ -916,14 +1027,16 @@ function renderToCanvas(scale) {
 }
 
 function exportPNG() {
+  closeExportMenu();
   const exportCanvas = renderToCanvas(2);
   const a = document.createElement('a');
-  a.download = 'coredraft.png';
+  a.download = buildExportFilename();
   a.href = exportCanvas.toDataURL('image/png');
   a.click();
 }
 
 function exportPDF() {
+  closeExportMenu();
   // Use the canvas as an image embedded in a PDF via a data URI.
   // We use the browser's print dialog pointed at a minimal HTML page
   // that contains the canvas image sized to fill the page — no library needed.
