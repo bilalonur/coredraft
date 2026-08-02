@@ -1387,9 +1387,9 @@ document.addEventListener('keydown', (e) => {
   if (e.target === textInput) return;
 
   // Undo / Redo
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); return; }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); return; }
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Z') { e.preventDefault(); redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); bcFlashButton('undo-button'); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); bcFlashButton('redo-button'); return; }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'Z') { e.preventDefault(); redo(); bcFlashButton('redo-button'); return; }
 
   if (e.ctrlKey || e.metaKey) return; // don't steal other ctrl shortcuts
 
@@ -1459,6 +1459,101 @@ function adjustZoom(delta) {
   viewScale = newScale;
   fullRedraw();
 }
+
+// ── Bottom controls: proximity-aware collapsible bar ──────
+//
+// The secondary group (undo/redo/theme) collapses during active drawing
+// and expands when the mouse approaches the bottom-right corner or when
+// a keyboard shortcut (Ctrl+Z / Ctrl+Y) is used. This keeps the canvas
+// clean during creative work while keeping all controls one gesture away.
+const bcSecondary = document.getElementById('bc-secondary');
+const bottomControls = document.getElementById('bottom-controls');
+let bcExpanded = true;
+let bcCollapseTimer = null;
+const BC_PROXIMITY_RIGHT = 260;  // px from right screen edge
+const BC_PROXIMITY_BOTTOM = 110; // px from bottom screen edge
+const BC_COLLAPSE_DELAY = 400;   // ms grace period before collapsing
+
+function bcSetExpanded(expanded) {
+  if (expanded === bcExpanded) return;
+  bcExpanded = expanded;
+  bcSecondary.classList.toggle('collapsed', !expanded);
+}
+
+// Returns true if the user is actively interacting with the canvas
+// (drawing, panning, dragging an object, or mid-shape).
+function bcIsInteracting() {
+  return isDrawing || isPanning || dragMoveInfo !== null || shapeStart !== null;
+}
+
+// Called on every mousemove anywhere in the document.
+function bcCheckProximity(clientX, clientY) {
+  // During active canvas interaction, force-collapse and bail.
+  // The user can't click buttons mid-stroke anyway.
+  if (bcIsInteracting()) {
+    if (bcCollapseTimer) { clearTimeout(bcCollapseTimer); bcCollapseTimer = null; }
+    bcSetExpanded(false);
+    return;
+  }
+
+  // Check if mouse is inside the proximity zone (bottom-right corner)
+  const winW = window.innerWidth;
+  const winH = window.innerHeight;
+  const inZone = (winW - clientX) < BC_PROXIMITY_RIGHT &&
+                 (winH - clientY) < BC_PROXIMITY_BOTTOM;
+
+  // Also check if hovering directly over the bar itself
+  const rect = bottomControls.getBoundingClientRect();
+  const onBar = clientX >= rect.left && clientX <= rect.right &&
+                clientY >= rect.top && clientY <= rect.bottom;
+
+  if (inZone || onBar) {
+    // Cancel any pending collapse and expand immediately
+    if (bcCollapseTimer) { clearTimeout(bcCollapseTimer); bcCollapseTimer = null; }
+    bcSetExpanded(true);
+  } else {
+    // Schedule a delayed collapse (prevents flicker on quick pass-throughs)
+    if (!bcCollapseTimer) {
+      bcCollapseTimer = setTimeout(() => {
+        bcCollapseTimer = null;
+        bcSetExpanded(false);
+      }, BC_COLLAPSE_DELAY);
+    }
+  }
+}
+
+// Flash a button with a glowing ring — used when undo/redo is triggered
+// via keyboard so the user sees which action fired.
+function bcFlashButton(buttonId) {
+  // Force-expand so the button is visible during the flash
+  if (bcCollapseTimer) { clearTimeout(bcCollapseTimer); bcCollapseTimer = null; }
+  bcSetExpanded(true);
+
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  // Restart the animation by toggling the class
+  btn.classList.remove('keyflash');
+  void btn.offsetWidth; // force reflow to restart animation
+  btn.classList.add('keyflash');
+  setTimeout(() => btn.classList.remove('keyflash'), 700);
+
+  // Auto-collapse after the flash if the mouse isn't in the zone
+  bcCollapseTimer = setTimeout(() => {
+    bcCollapseTimer = null;
+    bcSetExpanded(false);
+  }, 1800);
+}
+
+// Track mouse position globally for proximity detection
+document.addEventListener('mousemove', (e) => {
+  bcCheckProximity(e.clientX, e.clientY);
+}, { passive: true });
+
+// Force-collapse the moment a canvas interaction begins
+canvas.addEventListener('pointerdown', () => {
+  if (bcCollapseTimer) { clearTimeout(bcCollapseTimer); bcCollapseTimer = null; }
+  bcSetExpanded(false);
+}, { capture: true, passive: true });
 
 // ── Reset ─────────────────────────────────────────────────
 function resetCanvas() {

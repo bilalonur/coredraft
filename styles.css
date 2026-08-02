@@ -114,9 +114,6 @@ html, body {
   background: transparent;
 }
 
-/* Undo/redo buttons get tighter padding */
-.undo-redo-button { padding: 5px 6px; }
-
 .toolbar-label {
   font-size: 9px;
   color: var(--muted);
@@ -404,43 +401,144 @@ html, body {
   white-space: nowrap;
 }
 
-/* ── Zoom controls ───────────────────────────────────── */
+/* ── Bottom controls (zoom + undo/redo + theme) ─────── */
 
-#zoom-controls {
+#bottom-controls {
   position: fixed;
   bottom: 10px;
   right: 14px;
   display: flex;
-  gap: 3px;
-  z-index: 100;
-}
-
-#zoom-controls button {
-  width: 28px;
-  height: 28px;
+  align-items: center;
   background: var(--toolbar-bg);
   border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+
+/* Each functional group is a flex row */
+.bc-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#bottom-controls button {
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
   color: var(--text);
-  border-radius: 4px;
   cursor: pointer;
-  font-size: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  transition: background .12s, color .12s, transform .08s, box-shadow .25s;
 }
 
-#zoom-controls button:hover { background: var(--button-hover); }
+#bottom-controls button svg {
+  width: 16px;
+  height: 16px;
+}
 
+#bottom-controls button:hover {
+  background: var(--button-hover);
+}
+
+#bottom-controls button:active {
+  transform: scale(0.92);
+}
+
+#bottom-controls button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+#bottom-controls button:disabled:hover {
+  background: transparent;
+}
+
+#bottom-controls button:disabled:active {
+  transform: none;
+}
+
+/* Zoom group: the level display sits flush between the two buttons */
 #zoom-level {
   display: flex;
   align-items: center;
-  background: var(--toolbar-bg);
-  border: 1px solid var(--toolbar-border);
-  border-radius: 4px;
-  padding: 0 7px;
-  font-size: 10px;
+  justify-content: center;
+  min-width: 42px;
+  height: 30px;
+  padding: 0 4px;
+  font-size: 11px;
   color: var(--muted);
   font-family: 'Courier New', monospace;
-  min-width: 44px;
-  justify-content: center;
+  user-select: none;
+}
+
+/* Thin divider between functional groups */
+.bc-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--toolbar-border);
+  flex-shrink: 0;
+}
+
+/* ── Collapsible secondary group ─────────────────────── */
+
+/*
+ * The secondary group (undo/redo/theme) collapses during active drawing
+ * and expands on mouse proximity. We use a max-width transition with
+ * overflow:hidden on the parent for a smooth slide effect.
+ *
+ * Collapsed: width 0, opacity 0 (hidden)
+ * Expanded: natural width, opacity 1 (visible)
+ *
+ * The transition is slightly longer for expanding (a nice reveal) than
+ * for collapsing (snappy retreat so it gets out of the way quickly).
+ */
+.bc-secondary {
+  max-width: 200px;
+  opacity: 1;
+  transition: max-width .25s cubic-bezier(.4, 0, .2, 1),
+              opacity .2s ease-in .05s; /* slight delay on fade-in */
+}
+
+.bc-secondary.collapsed {
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none; /* collapsed area must not intercept canvas clicks */
+  transition: max-width .18s cubic-bezier(.4, 0, .2, 1),
+              opacity .1s ease-out; /* fast fade-out */
+}
+
+/* ── Keyboard flash animation ────────────────────────── */
+
+/*
+ * When undo/redo is triggered via keyboard shortcut, we flash the
+ * corresponding button with a glowing ring to draw the user's attention
+ * to it — even though the bar is collapsed, the expansion + flash combo
+ * makes the connection clear.
+ */
+@keyframes bc-keyflash {
+  0% {
+    box-shadow: inset 0 0 0 2px rgba(200, 169, 110, 0.9);
+    background: rgba(200, 169, 110, 0.35);
+  }
+  40% {
+    box-shadow: inset 0 0 0 2px rgba(200, 169, 110, 0.4);
+    background: rgba(200, 169, 110, 0.18);
+  }
+  100% {
+    box-shadow: inset 0 0 0 2px rgba(200, 169, 110, 0);
+    background: transparent;
+  }
+}
+
+#bottom-controls button.keyflash {
+  animation: bc-keyflash .6s ease-out;
 }
