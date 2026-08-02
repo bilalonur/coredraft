@@ -49,22 +49,75 @@ function toWorld(screenX, screenY) {
 let history = [];   // committed objects
 let future = [];    // objects popped by undo, available for redo
 
+// Undo stack holds action descriptors. Each action knows how to undo/redo itself:
+//   { type: 'add', obj }              — undo: remove obj, redo: re-add obj
+//   { type: 'remove', obj }           — undo: re-add obj, redo: remove obj
+//   { type: 'move', obj, from, to }   — undo: restore obj position to 'from', redo: to 'to'
+//   { type: 'erase', entries }        — undo: reverse each entry, redo: re-apply
+let undoStack = [];
+let redoStack = [];
+
+// Push a new object onto history and record an 'add' action for undo.
 function pushHistory(obj) {
   history.push(obj);
-  future = [];        // a new action clears the redo stack
+  future = [];
+  undoStack.push({ type: 'add', obj });
+  redoStack = [];
   syncUndoRedo();
 }
 
 function undo() {
-  if (!history.length) return;
-  future.push(history.pop());
+  if (!undoStack.length) return;
+  const action = undoStack.pop();
+  if (action.type === 'add') {
+    const idx = history.indexOf(action.obj);
+    if (idx !== -1) history.splice(idx, 1);
+    future.push(action.obj);
+    redoStack.push(action);
+  } else if (action.type === 'remove') {
+    history.push(action.obj);
+    future = [];
+    redoStack.push(action);
+  } else if (action.type === 'move') {
+    restorePosition(action.obj, action.from);
+    redoStack.push(action);
+  } else if (action.type === 'editText') {
+    applyTextSnapshot(action.obj, action.from);
+    redoStack.push(action);
+  } else if (action.type === 'erase') {
+    undoErase(action.entries);
+    redoStack.push(action);
+  }
+  selectedIndex = -1;
+  dragMoveInfo = null;
   syncUndoRedo();
   fullRedraw();
 }
 
 function redo() {
-  if (!future.length) return;
-  history.push(future.pop());
+  if (!redoStack.length) return;
+  const action = redoStack.pop();
+  if (action.type === 'add') {
+    history.push(action.obj);
+    future = [];
+    undoStack.push(action);
+  } else if (action.type === 'remove') {
+    const idx = history.indexOf(action.obj);
+    if (idx !== -1) history.splice(idx, 1);
+    future.push(action.obj);
+    undoStack.push(action);
+  } else if (action.type === 'move') {
+    restorePosition(action.obj, action.to);
+    undoStack.push(action);
+  } else if (action.type === 'editText') {
+    applyTextSnapshot(action.obj, action.to);
+    undoStack.push(action);
+  } else if (action.type === 'erase') {
+    redoErase(action.entries);
+    undoStack.push(action);
+  }
+  selectedIndex = -1;
+  dragMoveInfo = null;
   syncUndoRedo();
   fullRedraw();
 }
@@ -72,8 +125,52 @@ function redo() {
 function syncUndoRedo() {
   const undoButton = document.getElementById('undo-button');
   const redoButton = document.getElementById('redo-button');
-  undoButton.disabled = history.length === 0;
-  redoButton.disabled = future.length === 0;
+  undoButton.disabled = undoStack.length === 0;
+  redoButton.disabled = redoStack.length === 0;
+  scheduleSave();
+}
+
+// Reverse an erase operation: for each entry, either re-insert the removed
+// object, or replace the fragments with the original object.
+function undoErase(entries) {
+  // Process in reverse order of application (entries were unshifted, so
+  // index 0 was the last object touched — process front-to-back to restore)
+  for (const entry of entries) {
+    if (entry.removed) {
+      // Re-add the removed object
+      history.push(entry.obj);
+    } else if (entry.after !== undefined) {
+      // Replace: remove all fragment objects, re-insert the original
+      for (const frag of entry.after) {
+        const idx = history.indexOf(frag);
+        if (idx !== -1) history.splice(idx, 1);
+      }
+      // Re-insert original at its old position
+      history.splice(Math.min(entry.replaceIndex, history.length), 0, entry.before.obj);
+    }
+  }
+}
+
+// Re-apply an erase operation: remove originals / re-insert fragments.
+// Process in reverse order so chained splits replay in chronological order
+// (split A → [A1,A2] must happen before split A1 → [A1a,A1b]).
+function redoErase(entries) {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.removed) {
+      const idx = history.indexOf(entry.obj);
+      if (idx !== -1) history.splice(idx, 1);
+    } else if (entry.after !== undefined) {
+      // Remove original, insert fragments at the same index
+      const idx = history.indexOf(entry.before.obj);
+      if (idx !== -1) {
+        history.splice(idx, 1);
+        for (let j = entry.after.length - 1; j >= 0; j--) {
+          history.splice(idx, 0, entry.after[j]);
+        }
+      }
+    }
+  }
 }
 
 // ── Draw all history onto any context ────────────────────
@@ -117,7 +214,8 @@ function drawObject(context, obj) {
       context.fillText(line, obj.x, obj.y + i * obj.lineH);
     });
   } else if (obj.type === 'image') {
-    context.drawImage(obj.img, obj.x, obj.y, obj.w, obj.h);
+    // Guard: during async restore the img may still be decoding.
+    if (obj.img) context.drawImage(obj.img, obj.x, obj.y, obj.w, obj.h);
   }
   context.restore();
 }
@@ -126,18 +224,14 @@ function drawStroke(context, obj) {
   const pts = obj.pts;
   if (!pts || pts.length === 0) return;
 
-  // Eraser paints the background color — never destination-out.
-  // destination-out punches transparent holes that show white in exports
-  // and through the canvas element. Painting bg color is always correct.
-  const color = obj.isErase ? (isDark ? '#0e0e0e' : '#f5f3ef') : obj.color;
   context.lineCap = 'round';
   context.lineJoin = 'round';
-  context.strokeStyle = color;
+  context.strokeStyle = obj.color;
 
   if (pts.length === 1) {
     context.beginPath();
     context.arc(pts[0].x, pts[0].y, pts[0].w / 2, 0, Math.PI * 2);
-    context.fillStyle = color;
+    context.fillStyle = obj.color;
     context.fill();
   } else {
     for (let i = 1; i < pts.length; i++) {
@@ -158,17 +252,398 @@ function drawStroke(context, obj) {
   }
 }
 
-// ── Image hit-test ───────────────────────────────────────
-function hitTestImage(worldPoint) {
+// ── Geometric eraser ─────────────────────────────────────
+// The eraser modifies the actual geometry of the objects it touches:
+// strokes get split into fragments clipped at the exact eraser-circle
+// boundary, so only the portion under the eraser is removed — not the
+// whole segment. This means erased regions travel with their objects.
+
+// Compute the interval [t1, t2] ⊆ [0,1] along segment AB that falls
+// inside the eraser circle (center ex,ey, radius er).
+// Returns null when the segment does not overlap the circle.
+function circleSegmentInterval(ax, ay, bx, by, ex, ey, er) {
+  const dx = bx - ax, dy = by - ay;
+  const fx = ax - ex, fy = ay - ey;
+  const a = dx * dx + dy * dy;
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - er * er;
+
+  if (a === 0) return c <= 0 ? [0, 1] : null;       // degenerate (point) segment
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return c < 0 ? [0, 1] : null;        // line misses circle entirely
+
+  const sq = Math.sqrt(disc);
+  const lo = Math.max(0, (-b - sq) / (2 * a));
+  const hi = Math.min(1, (-b + sq) / (2 * a));
+  return lo <= hi ? [lo, hi] : null;
+}
+
+// Merge overlapping / adjacent [lo, hi] intervals into a sorted list.
+function mergeIntervals(intervals) {
+  if (intervals.length === 0) return [];
+  intervals.sort((a, b) => a[0] - b[0]);
+  const merged = [[intervals[0][0], intervals[0][1]]];
+  for (let i = 1; i < intervals.length; i++) {
+    const last = merged[merged.length - 1];
+    if (intervals[i][0] <= last[1]) {
+      last[1] = Math.max(last[1], intervals[i][1]);
+    } else {
+      merged.push([intervals[i][0], intervals[i][1]]);
+    }
+  }
+  return merged;
+}
+
+// Return the gaps (surviving regions) between merged intervals, within [lo, hi].
+function complementIntervals(merged, lo, hi) {
+  const result = [];
+  let cursor = lo;
+  for (const [m0, m1] of merged) {
+    if (cursor < m0) result.push([cursor, m0]);
+    cursor = Math.max(cursor, m1);
+  }
+  if (cursor < hi) result.push([cursor, hi]);
+  return result;
+}
+
+// Sample points along a shape defined by two corners (for rect/circle/line/arrow).
+// Returns an array of {x, y} points on the shape's outline.
+function sampleShapePoints(obj) {
+  const pts = [];
+  const steps = 48;
+  if (obj.type === 'line' || obj.type === 'arrow') {
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      pts.push({ x: obj.x1 + (obj.x2 - obj.x1) * t, y: obj.y1 + (obj.y2 - obj.y1) * t });
+    }
+  } else if (obj.type === 'rect') {
+    const x1 = Math.min(obj.x1, obj.x2), x2 = Math.max(obj.x1, obj.x2);
+    const y1 = Math.min(obj.y1, obj.y2), y2 = Math.max(obj.y1, obj.y2);
+    const w = x2 - x1, h = y2 - y1;
+    const per = Math.max(1, Math.floor(steps / 4));
+    for (let i = 0; i < per; i++) pts.push({ x: x1 + w * i / per, y: y1 });
+    for (let i = 0; i < per; i++) pts.push({ x: x2, y: y1 + h * i / per });
+    for (let i = 0; i < per; i++) pts.push({ x: x2 - w * i / per, y: y2 });
+    for (let i = 0; i < per; i++) pts.push({ x: x1, y: y2 - h * i / per });
+  } else if (obj.type === 'circle') {
+    const cx = (obj.x1 + obj.x2) / 2, cy = (obj.y1 + obj.y2) / 2;
+    const rx = Math.abs(obj.x2 - obj.x1) / 2, ry = Math.abs(obj.y2 - obj.y1) / 2;
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      pts.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
+    }
+  }
+  return pts;
+}
+
+// Check if a text object intersects the eraser circle.
+function textIntersectsEraser(obj, ex, ey, er) {
+  canvasContext.save();
+  canvasContext.font = obj.font;
+  for (let li = 0; li < obj.lines.length; li++) {
+    const lineY = obj.y + li * obj.lineH;
+    const w = canvasContext.measureText(obj.lines[li]).width;
+    // Check the bounding rect of this line against eraser
+    if (ex + er >= obj.x && ex - er <= obj.x + w &&
+        ey + er >= lineY && ey - er <= lineY + obj.lineH) {
+      canvasContext.restore();
+      return true;
+    }
+  }
+  canvasContext.restore();
+  return false;
+}
+
+// Check if an image object intersects the eraser circle.
+function imageIntersectsEraser(obj, ex, ey, er) {
+  return ex + er >= obj.x && ex - er <= obj.x + obj.w &&
+         ey + er >= obj.y && ey - er <= obj.y + obj.h;
+}
+
+// Convert a shape (line, arrow, rect, circle) into a stroke-like object
+// with sampled points, so it can be partially erased via splitStrokeByEraser.
+function shapeToStrokeObj(obj) {
+  const pts = sampleShapePoints(obj);
+  const w = Math.max(1.5, obj.size * 0.75);
+  return {
+    type: 'stroke',
+    color: obj.color,
+    size: obj.size,
+    pts: pts.map(p => ({ x: p.x, y: p.y, w: w }))
+  };
+}
+
+// Apply a set of eraser points to all objects in history.
+// Appends undo entries to the provided array: { obj, removed } or
+// { replaceIndex, before, after } for replace (split) operations.
+function applyEraserPath(eraserPath, undoEntries) {
+  // Iterate backwards so we can safely splice
   for (let i = history.length - 1; i >= 0; i--) {
     const obj = history[i];
-    if (obj.type !== 'image') continue;
-    if (worldPoint.x >= obj.x && worldPoint.x <= obj.x + obj.w &&
-        worldPoint.y >= obj.y && worldPoint.y <= obj.y + obj.h) {
-      return i;
+
+    if (obj.type === 'stroke' && !obj.isErase) {
+      // Split the stroke around every eraser point
+      const fragments = splitStrokeByEraser(obj, eraserPath);
+      if (fragments === null) {
+        // Not touched — leave as is
+        continue;
+      }
+      // Remove the original, add fragments
+      const before = { type: 'original', obj };
+      history.splice(i, 1);
+      const newFrags = [];
+      for (const frag of fragments) {
+        const newObj = {
+          type: 'stroke',
+          color: obj.color,
+          size: obj.size,
+          pts: frag
+        };
+        history.splice(i, 0, newObj);
+        newFrags.push(newObj);
+      }
+      undoEntries.unshift({ obj: null, replaceIndex: i, before: before, after: newFrags });
+    } else if (obj.type === 'stroke' && obj.isErase) {
+      // Don't erase other eraser strokes
+      continue;
+    } else if (obj.type === 'text') {
+      let touched = false;
+      for (const ep of eraserPath) {
+        if (textIntersectsEraser(obj, ep.x, ep.y, ep.w / 2)) { touched = true; break; }
+      }
+      if (touched) {
+        history.splice(i, 1);
+        undoEntries.unshift({ obj, removed: true });
+      }
+    } else if (obj.type === 'image') {
+      let touched = false;
+      for (const ep of eraserPath) {
+        if (imageIntersectsEraser(obj, ep.x, ep.y, ep.w / 2)) { touched = true; break; }
+      }
+      if (touched) {
+        history.splice(i, 1);
+        undoEntries.unshift({ obj, removed: true });
+      }
+    } else {
+      // Shapes (arrow, line, rect, circle): convert to stroke points and split
+      // so only the erased portion is removed, not the whole shape.
+      const strokeObj = shapeToStrokeObj(obj);
+      const fragments = splitStrokeByEraser(strokeObj, eraserPath);
+      if (fragments === null) {
+        continue; // Not touched
+      }
+      // Remove the original shape, add surviving stroke fragments
+      const before = { type: 'original', obj };
+      history.splice(i, 1);
+      const newFrags = [];
+      for (const frag of fragments) {
+        const newObj = {
+          type: 'stroke',
+          color: obj.color,
+          size: obj.size,
+          pts: frag
+        };
+        history.splice(i, 0, newObj);
+        newFrags.push(newObj);
+      }
+      undoEntries.unshift({ obj: null, replaceIndex: i, before: before, after: newFrags });
+    }
+  }
+}
+
+// Split a stroke into fragments, removing only the portions that fall
+// inside any eraser circle. Fragments are clipped at the exact
+// circle-segment intersection points, so only the erased part is removed.
+// Returns null if the stroke is not touched at all.
+// Returns an array of point-arrays (fragments) if touched (may be empty = fully erased).
+function splitStrokeByEraser(strokeObj, eraserPath) {
+  const pts = strokeObj.pts;
+  if (pts.length === 0) return null;
+
+  // Single-point stroke: erased if the point falls inside any eraser circle
+  if (pts.length === 1) {
+    for (const ep of eraserPath) {
+      if (Math.hypot(pts[0].x - ep.x, pts[0].y - ep.y) <= ep.w / 2) return [];
+    }
+    return null;
+  }
+
+  // For each segment i (pts[i-1] → pts[i]), collect erased intervals in [0,1].
+  const segErased = []; // array of merged interval-lists, one per segment
+  let anyErased = false;
+
+  for (let i = 1; i < pts.length; i++) {
+    const p0 = pts[i - 1], p1 = pts[i];
+    const intervals = [];
+    for (const ep of eraserPath) {
+      const iv = circleSegmentInterval(p0.x, p0.y, p1.x, p1.y, ep.x, ep.y, ep.w / 2);
+      if (iv) intervals.push(iv);
+    }
+    if (intervals.length > 0) anyErased = true;
+    segErased.push(mergeIntervals(intervals));
+  }
+
+  if (!anyErased) return null;
+
+  // Walk segments, building fragments from surviving sub-intervals.
+  // When a segment's last survivor reaches t=1 and the next segment's first
+  // survivor starts at t=0, the shared endpoint is not duplicated.
+  const lerp = (p0, p1, t) => ({
+    x: p0.x + t * (p1.x - p0.x),
+    y: p0.y + t * (p1.y - p0.y),
+    w: p0.w + t * (p1.w - p0.w)
+  });
+
+  const fragments = [];
+  let current = [];
+
+  for (let si = 0; si < segErased.length; si++) {
+    const p0 = pts[si], p1 = pts[si + 1];
+    const survivors = complementIntervals(segErased[si], 0, 1);
+
+    if (survivors.length === 0) {
+      // Entire segment erased — close the current fragment
+      if (current.length > 0) { fragments.push(current); current = []; }
+      continue;
+    }
+
+    for (let svi = 0; svi < survivors.length; svi++) {
+      const [slo, shi] = survivors[svi];
+
+      if (slo > 0) {
+        // Segment is erased before this survivor → boundary point, start fresh
+        if (current.length > 0) { fragments.push(current); current = []; }
+        current.push(lerp(p0, p1, slo));
+      } else if (current.length === 0) {
+        // slo === 0, fresh fragment → add the segment start point
+        current.push(lerp(p0, p1, 0));
+      }
+      // else: slo === 0 and current non-empty → shared endpoint, skip duplicate
+
+      // End point of this surviving sub-interval
+      current.push(lerp(p0, p1, shi));
+
+      // If there's a gap after this survivor, close the fragment
+      if (svi < survivors.length - 1 || shi < 1) {
+        fragments.push(current);
+        current = [];
+      }
+    }
+  }
+  if (current.length > 0) fragments.push(current);
+
+  // Drop single-point fragments (not useful for drawing)
+  return fragments.filter(f => f.length >= 2);
+}
+
+// ── Selection helpers (bounds, hit-test, move) ───────────
+
+// Axis-aligned bounding box of an object in world coordinates.
+function getObjectBounds(obj) {
+  if (obj.type === 'stroke') {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of obj.pts) {
+      const r = p.w / 2;
+      minX = Math.min(minX, p.x - r);
+      minY = Math.min(minY, p.y - r);
+      maxX = Math.max(maxX, p.x + r);
+      maxY = Math.max(maxY, p.y + r);
+    }
+    return { minX, minY, maxX, maxY };
+  } else if (obj.type === 'image') {
+    return { minX: obj.x, minY: obj.y, maxX: obj.x + obj.w, maxY: obj.y + obj.h };
+  } else if (obj.type === 'text') {
+    canvasContext.save();
+    canvasContext.font = obj.font;
+    let maxX = obj.x;
+    for (const line of obj.lines) {
+      maxX = Math.max(maxX, obj.x + canvasContext.measureText(line).width);
+    }
+    canvasContext.restore();
+    return { minX: obj.x, minY: obj.y, maxX, maxY: obj.y + obj.lines.length * obj.lineH };
+  } else if (obj.type === 'circle') {
+    const cx = (obj.x1 + obj.x2) / 2;
+    const cy = (obj.y1 + obj.y2) / 2;
+    const rx = Math.abs(obj.x2 - obj.x1) / 2;
+    const ry = Math.abs(obj.y2 - obj.y1) / 2;
+    return { minX: cx - rx, minY: cy - ry, maxX: cx + rx, maxY: cy + ry };
+  } else {
+    // arrow, line, rect — all use x1,y1,x2,y2
+    return {
+      minX: Math.min(obj.x1, obj.x2),
+      minY: Math.min(obj.y1, obj.y2),
+      maxX: Math.max(obj.x1, obj.x2),
+      maxY: Math.max(obj.y1, obj.y2)
+    };
+  }
+}
+
+// Hit-test any object by checking if the point is inside its bounding box.
+// For strokes, uses a more precise distance check to the nearest segment.
+function hitTestAny(worldPoint) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const obj = history[i];
+    if (obj.type === 'stroke') {
+      const tolerance = Math.max(6, brushSize);
+      for (const p of obj.pts) {
+        const dx = worldPoint.x - p.x;
+        const dy = worldPoint.y - p.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= p.w / 2 + tolerance) return i;
+      }
+    } else {
+      const b = getObjectBounds(obj);
+      const pad = 6;
+      if (worldPoint.x >= b.minX - pad && worldPoint.x <= b.maxX + pad &&
+          worldPoint.y >= b.minY - pad && worldPoint.y <= b.maxY + pad) {
+        return i;
+      }
     }
   }
   return -1;
+}
+
+// Move an object by (dx, dy) in world coordinates.
+function translateObject(obj, dx, dy) {
+  if (obj.type === 'stroke') {
+    for (const p of obj.pts) { p.x += dx; p.y += dy; }
+  } else if (obj.type === 'image' || obj.type === 'text') {
+    obj.x += dx; obj.y += dy;
+  } else {
+    obj.x1 += dx; obj.y1 += dy; obj.x2 += dx; obj.y2 += dy;
+  }
+}
+
+// Capture the position of an object so we can restore it on undo.
+function snapshotPosition(obj) {
+  if (obj.type === 'stroke') {
+    return obj.pts.map(p => ({ x: p.x, y: p.y }));
+  } else if (obj.type === 'image' || obj.type === 'text') {
+    return { x: obj.x, y: obj.y };
+  } else {
+    return { x1: obj.x1, y1: obj.y1, x2: obj.x2, y2: obj.y2 };
+  }
+}
+
+// Restore an object's position from a snapshot.
+function restorePosition(obj, snap) {
+  if (obj.type === 'stroke') {
+    for (let i = 0; i < obj.pts.length; i++) {
+      obj.pts[i].x = snap[i].x;
+      obj.pts[i].y = snap[i].y;
+    }
+  } else if (obj.type === 'image' || obj.type === 'text') {
+    obj.x = snap.x; obj.y = snap.y;
+  } else {
+    obj.x1 = snap.x1; obj.y1 = snap.y1; obj.x2 = snap.x2; obj.y2 = snap.y2;
+  }
+}
+
+// Apply a text-content snapshot (lines, color, font, lineH) to a text object.
+function applyTextSnapshot(obj, snap) {
+  obj.lines = snap.lines.slice();
+  obj.color = snap.color;
+  obj.font = snap.font;
+  obj.lineH = snap.lineH;
 }
 
 // ── Full redraw ───────────────────────────────────────────
@@ -182,23 +657,30 @@ function fullRedraw() {
   canvasContext.translate(panX, panY);
   canvasContext.scale(viewScale, viewScale);
 
-  for (const obj of history) drawObject(canvasContext, obj);
+  for (let i = 0; i < history.length; i++) {
+    // Skip the text object currently being edited — the textarea overlay shows it instead
+    if (activeTextNode && activeTextNode.editIndex === i) continue;
+    drawObject(canvasContext, history[i]);
+  }
 
   // Live shape preview
   if (shapeStart && shapeEnd) drawShapePreview(canvasContext);
 
-  // Highlight image being dragged
-  if (draggedImage) {
-    const obj = draggedImage.obj;
+  // Selection bounding box (select tool)
+  if (tool === 'select' && selectedIndex !== -1 && selectedIndex < history.length) {
+    const obj = history[selectedIndex];
+    const b = getObjectBounds(obj);
+    const pad = 6 / viewScale;
     canvasContext.strokeStyle = isDark ? '#c8a96e' : '#8a6a2a';
-    canvasContext.lineWidth = 2 / viewScale;
+    canvasContext.lineWidth = 1.5 / viewScale;
     canvasContext.setLineDash([6 / viewScale, 4 / viewScale]);
-    canvasContext.strokeRect(obj.x, obj.y, obj.w, obj.h);
+    canvasContext.strokeRect(b.minX - pad, b.minY - pad, b.maxX - b.minX + pad * 2, b.maxY - b.minY + pad * 2);
     canvasContext.setLineDash([]);
   }
 
   canvasContext.restore();
   document.getElementById('zoom-level').textContent = Math.round(viewScale * 100) + '%';
+  scheduleSave();
 }
 
 // ── Arrow ─────────────────────────────────────────────────
@@ -320,31 +802,38 @@ let isPanning = false;
 let panStart = null;
 let textBold = false, textItalic = false;
 let activeTextNode = null;
-let draggedImage = null;   // { obj, ox, oy } — image being dragged
+let selectedIndex = -1;    // index in history of the selected object, -1 = none
+let dragMoveInfo = null;   // { index, lastWorld, startSnap } — active move in select tool
+let eraserUndoEntries = []; // accumulates undo entries during a live eraser drag
 
 const SHAPE_TOOLS = new Set(['arrow', 'line', 'rect', 'circle']);
 const CURSORS = {
-  draw: 'crosshair', eraser: 'cell', arrow: 'crosshair', line: 'crosshair',
+  select: 'default', draw: 'crosshair', eraser: 'cell', arrow: 'crosshair', line: 'crosshair',
   rect: 'crosshair', circle: 'crosshair', text: 'text', pan: 'grab'
 };
 const STATUSES = {
-  draw:   'Draw · Scroll=zoom · Space/middle=pan',
-  eraser: 'Eraser · Drag to erase',
-  arrow:  'Arrow · Click & drag',
-  line:   'Line · Click & drag',
-  rect:   'Rectangle · Click & drag',
-  circle: 'Circle / Ellipse · Click & drag',
-  text:   'Text · Click to place · Double-click text to edit',
-  pan:    'Pan · Drag to move · Double-click image to relocate'
+  select:  'Select · Click object to select · Drag to move · Double-click text to edit',
+  draw:    'Draw · Scroll=zoom · Space/middle=pan',
+  eraser:  'Eraser · Drag to erase',
+  arrow:   'Arrow · Click & drag',
+  line:    'Line · Click & drag',
+  rect:    'Rectangle · Click & drag',
+  circle:  'Circle / Ellipse · Click & drag',
+  text:    'Text · Click to place · Double-click text to edit',
+  pan:     'Pan · Drag to move canvas'
 };
 
 const TOOL_BUTTON_IDS = {
-  draw: 'tool-draw', eraser: 'tool-eraser', text: 'tool-text', pan: 'tool-pan',
+  select: 'tool-select', draw: 'tool-draw', eraser: 'tool-eraser', text: 'tool-text', pan: 'tool-pan',
   arrow: 'tool-arrow', line: 'tool-line', rect: 'tool-rect', circle: 'tool-circle'
 };
 
 function setTool(t) {
   commitText();
+  if (tool === 'select' && t !== 'select') {
+    selectedIndex = -1;
+    dragMoveInfo = null;
+  }
   tool = t;
   Object.entries(TOOL_BUTTON_IDS).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -352,6 +841,7 @@ function setTool(t) {
   });
   canvas.style.cursor = CURSORS[t] || 'crosshair';
   statusBar.textContent = STATUSES[t] || '';
+  fullRedraw();
 }
 
 document.getElementById('brush-size').addEventListener('input', (e) => {
@@ -381,6 +871,28 @@ function startStroke(worldPoint) {
     isErase: tool === 'eraser',
     pts: strokePoints
   };
+  // Eraser: apply the first point immediately so erasing is visible from the start
+  if (tool === 'eraser') {
+    eraserUndoEntries = [];
+    applyEraserPath([strokePoints[0]], eraserUndoEntries);
+    fullRedraw();
+    drawEraserCursor(strokePoints[0]);
+  }
+}
+
+function drawEraserCursor(point) {
+  const r = (point.w / 2) * viewScale;
+  const sx = point.x * viewScale + panX;
+  const sy = point.y * viewScale + panY;
+  canvasContext.save();
+  canvasContext.strokeStyle = isDark ? 'rgba(200,169,110,0.8)' : 'rgba(138,106,42,0.8)';
+  canvasContext.lineWidth = 1.5;
+  canvasContext.setLineDash([4, 3]);
+  canvasContext.beginPath();
+  canvasContext.arc(sx, sy, r, 0, Math.PI * 2);
+  canvasContext.stroke();
+  canvasContext.setLineDash([]);
+  canvasContext.restore();
 }
 
 function continueStroke(worldPoint) {
@@ -393,35 +905,10 @@ function continueStroke(worldPoint) {
   strokePoints.push({ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(lastVelocity, brushSize), t: Date.now() });
 
   if (tool === 'eraser') {
-    // Paint bg color directly on screen canvas — fast, no fullRedraw needed,
-    // and never punches a transparent hole.
-    const bgColor = isDark ? '#0e0e0e' : '#f5f3ef';
-    const n = strokePoints.length;
-    if (n < 2) return;
-    const p0 = strokePoints[Math.max(0, n - 4)];
-    const p1 = strokePoints[n - 3] || strokePoints[0];
-    const p2 = strokePoints[n - 2];
-    const p3 = strokePoints[n - 1];
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
-    const sx1 = p1.x * viewScale + panX;
-    const sy1 = p1.y * viewScale + panY;
-    const sx2 = p2.x * viewScale + panX;
-    const sy2 = p2.y * viewScale + panY;
-    const scp1x = cp1x * viewScale + panX;
-    const scp1y = cp1y * viewScale + panY;
-    const scp2x = cp2x * viewScale + panX;
-    const scp2y = cp2y * viewScale + panY;
-    canvasContext.strokeStyle = bgColor;
-    canvasContext.lineWidth = p2.w * viewScale;
-    canvasContext.lineCap = 'round';
-    canvasContext.lineJoin = 'round';
-    canvasContext.beginPath();
-    canvasContext.moveTo(sx1, sy1);
-    canvasContext.bezierCurveTo(scp1x, scp1y, scp2x, scp2y, sx2, sy2);
-    canvasContext.stroke();
+    // Apply eraser incrementally: only the latest point so erasing is visible live
+    applyEraserPath([strokePoints[strokePoints.length - 1]], eraserUndoEntries);
+    fullRedraw();
+    drawEraserCursor(strokePoints[strokePoints.length - 1]);
     return;
   }
 
@@ -465,7 +952,19 @@ function endStroke(worldPoint) {
       currentStroke.pts.push({ x: p.x, y: p.y, w: computeStrokeWidth(0, brushSize) });
     }
   }
-  pushHistory(currentStroke);
+
+  if (currentStroke.isErase) {
+    // Eraser was applied incrementally during the drag; commit the accumulated undo entries
+    if (eraserUndoEntries.length > 0) {
+      undoStack.push({ type: 'erase', entries: eraserUndoEntries });
+      redoStack = [];
+      future = [];
+      syncUndoRedo();
+    }
+    eraserUndoEntries = [];
+  } else {
+    pushHistory(currentStroke);
+  }
   currentStroke = null;
   strokePoints = [];
   lastVelocity = 0;
@@ -599,6 +1098,7 @@ function editText(index) {
   drawColor = obj.color;
   activeTextNode = { worldPoint: { x: obj.x, y: obj.y }, editIndex: index };
   autoResizeTextarea();
+  fullRedraw();   // hide the original text now that the textarea overlay shows it
   justPlacedText = true;
   requestAnimationFrame(() => { justPlacedText = false; });
 }
@@ -619,15 +1119,33 @@ function commitText() {
   if (!activeTextNode || textInput.style.display === 'none') return;
   const value = textInput.value;
   const style = getTextStyle();
+  const editIndex = activeTextNode.editIndex;
+  const worldPoint = activeTextNode.worldPoint;
+  // Clear activeTextNode BEFORE fullRedraw so the committed text is drawn again
+  activeTextNode = null;
   if (value.trim()) {
-    if (activeTextNode.editIndex !== undefined) {
+    if (editIndex !== undefined) {
       // Update existing text object in place
-      const obj = history[activeTextNode.editIndex];
+      const obj = history[editIndex];
+      // Snapshot the old state so the edit is undoable
+      const oldSnap = {
+        lines: obj.lines.slice(),
+        color: obj.color,
+        font: obj.font,
+        lineH: obj.lineH
+      };
       obj.lines = value.split('\n');
       obj.color = drawColor;
       obj.font = style.css;
       obj.lineH = style.lineH;
-      future = [];
+      const newSnap = {
+        lines: obj.lines.slice(),
+        color: obj.color,
+        font: obj.font,
+        lineH: obj.lineH
+      };
+      undoStack.push({ type: 'editText', obj, from: oldSnap, to: newSnap });
+      redoStack = [];
       syncUndoRedo();
       fullRedraw();
     } else {
@@ -636,22 +1154,23 @@ function commitText() {
         color: drawColor,
         font: style.css,
         lineH: style.lineH,
-        x: activeTextNode.worldPoint.x,
-        y: activeTextNode.worldPoint.y,
+        x: worldPoint.x,
+        y: worldPoint.y,
         lines: value.split('\n')
       });
       fullRedraw();
     }
-  } else if (activeTextNode.editIndex !== undefined) {
+  } else if (editIndex !== undefined) {
     // Editing produced empty text — remove the original
-    history.splice(activeTextNode.editIndex, 1);
-    future = [];
+    const obj = history[editIndex];
+    history.splice(editIndex, 1);
+    undoStack.push({ type: 'remove', obj });
+    redoStack = [];
     syncUndoRedo();
     fullRedraw();
   }
   textInput.style.display = 'none';
   textInput.value = '';
-  activeTextNode = null;
 }
 
 // ── Paste image ───────────────────────────────────────────
@@ -700,17 +1219,23 @@ canvas.addEventListener('mousedown', (e) => {
 
   if (textInput.style.display === 'block' && tool !== 'text') commitText();
 
-  // If an image was picked up via double-click, clicking drops it in place
-  if (draggedImage) {
-    if (draggedImage.moved) { future = []; syncUndoRedo(); }
-    draggedImage = null;
-    canvas.style.cursor = CURSORS[tool];
+  if (tool === 'select') {
+    const hit = hitTestAny(worldPoint);
+    if (hit !== -1) {
+      selectedIndex = hit;
+      const obj = history[hit];
+      dragMoveInfo = {
+        index: hit,
+        lastWorld: { x: worldPoint.x, y: worldPoint.y },
+        startSnap: snapshotPosition(obj),
+        moved: false
+      };
+      canvas.style.cursor = 'grabbing';
+    } else {
+      selectedIndex = -1;
+    }
     fullRedraw();
-    statusBar.textContent = STATUSES[tool] || '';
-    return;
-  }
-
-  if (tool === 'pan') {
+  } else if (tool === 'pan') {
     isPanning = true;
     panStart = { ox: panX - e.clientX, oy: panY - e.clientY };
     canvas.style.cursor = 'grabbing';
@@ -739,14 +1264,21 @@ canvas.addEventListener('mousemove', (e) => {
     fullRedraw();
     return;
   }
-  if (draggedImage) {
-    draggedImage.obj.x = worldPoint.x - draggedImage.ox;
-    draggedImage.obj.y = worldPoint.y - draggedImage.oy;
-    draggedImage.moved = true;
+  if (dragMoveInfo) {
+    const dx = worldPoint.x - dragMoveInfo.lastWorld.x;
+    const dy = worldPoint.y - dragMoveInfo.lastWorld.y;
+    if (dx !== 0 || dy !== 0) dragMoveInfo.moved = true;
+    translateObject(history[dragMoveInfo.index], dx, dy);
+    dragMoveInfo.lastWorld = { x: worldPoint.x, y: worldPoint.y };
     fullRedraw();
     return;
   }
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) continueStroke(worldPoint);
+  if (tool === 'eraser' && !isDrawing) {
+    // Show eraser circle cursor on hover
+    fullRedraw();
+    drawEraserCursor({ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, brushSize) });
+  }
   if (SHAPE_TOOLS.has(tool) && shapeStart) {
     shapeEnd = worldPoint;
     fullRedraw();
@@ -765,6 +1297,16 @@ canvas.addEventListener('mouseup', (e) => {
   if (isPanning) {
     isPanning = false;
     canvas.style.cursor = CURSORS[tool];
+  } else if (dragMoveInfo) {
+    if (dragMoveInfo.moved) {
+      const obj = history[dragMoveInfo.index];
+      const endSnap = snapshotPosition(obj);
+      undoStack.push({ type: 'move', obj, from: dragMoveInfo.startSnap, to: endSnap });
+      redoStack = [];
+      syncUndoRedo();
+    }
+    dragMoveInfo = null;
+    canvas.style.cursor = CURSORS[tool];
   } else if (tool === 'draw' || tool === 'eraser') {
     endStroke(worldPoint);
   } else if (SHAPE_TOOLS.has(tool) && shapeStart) {
@@ -777,10 +1319,24 @@ canvas.addEventListener('mouseleave', (e) => {
   const { sx, sy } = getPointerCoords(e);
   const worldPoint = toWorld(sx, sy);
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) endStroke(worldPoint);
+  // Clear eraser hover preview
+  if (tool === 'eraser' && !isDrawing) fullRedraw();
   if (SHAPE_TOOLS.has(tool) && shapeStart) {
     shapeStart = null;
     shapeEnd = null;
     fullRedraw();
+  }
+  // If a move-drag is in progress, commit it on mouseleave
+  if (dragMoveInfo) {
+    if (dragMoveInfo.moved) {
+      const obj = history[dragMoveInfo.index];
+      const endSnap = snapshotPosition(obj);
+      undoStack.push({ type: 'move', obj, from: dragMoveInfo.startSnap, to: endSnap });
+      redoStack = [];
+      syncUndoRedo();
+    }
+    dragMoveInfo = null;
+    canvas.style.cursor = CURSORS[tool];
   }
   middleMouseDown = false;
 });
@@ -789,24 +1345,11 @@ canvasWrap.addEventListener('mousedown', (e) => {
   if (e.target !== textInput && activeTextNode && !justPlacedText) commitText();
 });
 
-// ── Double-click to edit text / relocate image ─────────
+// ── Double-click to edit text ──────────────────────────
 canvas.addEventListener('dblclick', (e) => {
   e.preventDefault();
   const { sx, sy } = getPointerCoords(e);
   const worldPoint = toWorld(sx, sy);
-
-  // In pan mode, double-click an image to pick it up for relocation
-  if (tool === 'pan') {
-    const imageIndex = hitTestImage(worldPoint);
-    if (imageIndex !== -1) {
-      const obj = history[imageIndex];
-      draggedImage = { obj, ox: worldPoint.x - obj.x, oy: worldPoint.y - obj.y, moved: false };
-      canvas.style.cursor = 'grabbing';
-      statusBar.textContent = 'Image picked up · Move mouse to position · Click to drop';
-      fullRedraw();
-      return;
-    }
-  }
 
   const index = hitTestText(worldPoint);
   if (index === -1) return;
@@ -815,11 +1358,12 @@ canvas.addEventListener('dblclick', (e) => {
   let removed = 0;
   while (removed < 2 && history.length > 0) {
     if (isTrivialAction(history[history.length - 1])) {
-      future.push(history.pop());
+      const obj = history.pop();
+      undoStack.push({ type: 'remove', obj });
       removed++;
     } else break;
   }
-  if (removed > 0) syncUndoRedo();
+  if (removed > 0) { redoStack = []; syncUndoRedo(); }
 
   shapeStart = null;
   shapeEnd = null;
@@ -854,6 +1398,7 @@ document.addEventListener('keydown', (e) => {
     spaceDown = true;
     if (!isPanning && !middleMouseDown) canvas.style.cursor = 'grab';
   }
+  if (e.key === 'v') setTool('select');
   if (e.key === 'd') setTool('draw');
   if (e.key === 'e') setTool('eraser');
   if (e.key === 'a') setTool('arrow');
@@ -862,6 +1407,38 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'c') setTool('circle');
   if (e.key === 't') setTool('text');
   if (e.key === 'p') setTool('pan');
+
+  // Select tool: Delete / Backspace removes the selected object
+  if ((e.key === 'Delete' || e.key === 'Backspace') && tool === 'select' && selectedIndex !== -1) {
+    e.preventDefault();
+    const obj = history[selectedIndex];
+    history.splice(selectedIndex, 1);
+    undoStack.push({ type: 'remove', obj });
+    redoStack = [];
+    selectedIndex = -1;
+    syncUndoRedo();
+    fullRedraw();
+  }
+
+  // Select tool: Arrow keys nudge the selected object (1px, or 10px with Shift)
+  if (tool === 'select' && selectedIndex !== -1 &&
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    let dx = 0, dy = 0;
+    if (e.key === 'ArrowLeft') dx = -step;
+    if (e.key === 'ArrowRight') dx = step;
+    if (e.key === 'ArrowUp') dy = -step;
+    if (e.key === 'ArrowDown') dy = step;
+    const obj = history[selectedIndex];
+    const fromSnap = snapshotPosition(obj);
+    translateObject(obj, dx, dy);
+    const toSnap = snapshotPosition(obj);
+    undoStack.push({ type: 'move', obj, from: fromSnap, to: toSnap });
+    redoStack = [];
+    syncUndoRedo();
+    fullRedraw();
+  }
 });
 
 document.addEventListener('keyup', (e) => {
@@ -889,8 +1466,13 @@ function resetCanvas() {
   commitText();
   history = [];
   future = [];
+  undoStack = [];
+  redoStack = [];
+  selectedIndex = -1;
+  dragMoveInfo = null;
   shapeStart = null;
   shapeEnd = null;
+  eraserUndoEntries = [];
   syncUndoRedo();
   viewScale = 1;
   initCanvasView();
@@ -934,7 +1516,7 @@ const infoStarted = document.getElementById('info-started');
 const infoToggle = document.getElementById('info-toggle');
 
 let canvasName = '';
-const canvasStartTime = new Date();
+let canvasStartTime = new Date();
 
 function formatDateTime(date) {
   return date.toLocaleString(undefined, {
@@ -963,6 +1545,7 @@ function closeInfoCard() {
 // Save the name and close when focus leaves the name field
 infoName.addEventListener('blur', () => {
   canvasName = infoName.value.trim();
+  scheduleSave();
   closeInfoCard();
 });
 
@@ -978,6 +1561,7 @@ document.addEventListener('click', (e) => {
       !infoCard.contains(e.target) &&
       !infoToggle.contains(e.target)) {
     canvasName = infoName.value.trim();
+    scheduleSave();
     closeInfoCard();
   }
 });
@@ -1079,7 +1663,6 @@ function exportPDF() {
 
 // ── Touch ─────────────────────────────────────────────────
 let lastTouchDistance = null;
-let lastTapTime = 0;
 
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
@@ -1093,30 +1676,28 @@ canvas.addEventListener('touchstart', (e) => {
   const touch = e.touches[0];
   const { sx, sy } = getPointerCoords(touch);
   const worldPoint = toWorld(sx, sy);
-  const now = Date.now();
 
-  // Drop image if one is being relocated
-  if (draggedImage) {
-    if (draggedImage.moved) { future = []; syncUndoRedo(); }
-    draggedImage = null;
-    fullRedraw();
-    return;
-  }
-
-  // Double-tap on image in pan mode → pick up for relocation
-  if (tool === 'pan' && now - lastTapTime < 350) {
-    const imageIndex = hitTestImage(worldPoint);
-    if (imageIndex !== -1) {
-      const obj = history[imageIndex];
-      draggedImage = { obj, ox: worldPoint.x - obj.x, oy: worldPoint.y - obj.y, moved: false };
-      fullRedraw();
-      return;
+  if (tool === 'select') {
+    const hit = hitTestAny(worldPoint);
+    if (hit !== -1) {
+      selectedIndex = hit;
+      const obj = history[hit];
+      dragMoveInfo = {
+        index: hit,
+        lastWorld: { x: worldPoint.x, y: worldPoint.y },
+        startSnap: snapshotPosition(obj),
+        moved: false
+      };
+    } else {
+      selectedIndex = -1;
     }
+    fullRedraw();
+  } else if (tool === 'draw' || tool === 'eraser') {
+    startStroke(worldPoint);
+  } else if (SHAPE_TOOLS.has(tool)) {
+    shapeStart = worldPoint;
+    shapeEnd = worldPoint;
   }
-
-  lastTapTime = now;
-  if (tool === 'draw' || tool === 'eraser') startStroke(worldPoint);
-  else if (SHAPE_TOOLS.has(tool)) { shapeStart = worldPoint; shapeEnd = worldPoint; }
 }, { passive: false });
 
 canvas.addEventListener('touchmove', (e) => {
@@ -1141,10 +1722,12 @@ canvas.addEventListener('touchmove', (e) => {
   const touch = e.touches[0];
   const { sx, sy } = getPointerCoords(touch);
   const worldPoint = toWorld(sx, sy);
-  if (draggedImage) {
-    draggedImage.obj.x = worldPoint.x - draggedImage.ox;
-    draggedImage.obj.y = worldPoint.y - draggedImage.oy;
-    draggedImage.moved = true;
+  if (dragMoveInfo) {
+    const dx = worldPoint.x - dragMoveInfo.lastWorld.x;
+    const dy = worldPoint.y - dragMoveInfo.lastWorld.y;
+    if (dx !== 0 || dy !== 0) dragMoveInfo.moved = true;
+    translateObject(history[dragMoveInfo.index], dx, dy);
+    dragMoveInfo.lastWorld = { x: worldPoint.x, y: worldPoint.y };
     fullRedraw();
     return;
   }
@@ -1158,9 +1741,215 @@ canvas.addEventListener('touchend', (e) => {
   const touch = e.changedTouches[0];
   const { sx, sy } = getPointerCoords(touch);
   const worldPoint = toWorld(sx, sy);
-  if (tool === 'draw' || tool === 'eraser') endStroke(worldPoint);
-  else if (SHAPE_TOOLS.has(tool) && shapeStart) { shapeEnd = worldPoint; commitShape(); }
+  if (dragMoveInfo) {
+    if (dragMoveInfo.moved) {
+      const obj = history[dragMoveInfo.index];
+      const endSnap = snapshotPosition(obj);
+      undoStack.push({ type: 'move', obj, from: dragMoveInfo.startSnap, to: endSnap });
+      redoStack = [];
+      syncUndoRedo();
+    }
+    dragMoveInfo = null;
+  } else if (tool === 'draw' || tool === 'eraser') {
+    endStroke(worldPoint);
+  } else if (SHAPE_TOOLS.has(tool) && shapeStart) {
+    shapeEnd = worldPoint;
+    commitShape();
+  }
 });
 
+// ════════════════════════════════════════════════════════
+// PERSISTENCE (IndexedDB auto-save)
+// ════════════════════════════════════════════════════════
+// The entire canvas state — every object, the viewport, theme, and
+// metadata — is serialized to IndexedDB so the user's latest draft is
+// always recovered after a refresh, tab close, or browser crash.
+//
+// Images are stored as data URLs (base64 PNG) alongside their geometry.
+// On load they are decoded back into HTMLImageElement objects before the
+// next redraw, so the rest of the app treats them identically to pasted images.
+
+const DB_NAME = 'coredraft';
+const DB_VERSION = 1;
+const STORE_NAME = 'state';
+const SAVE_KEY = 'current';
+const SAVE_DELAY_MS = 800;   // debounce: coalesce rapid edits into one write
+
+let saveTimer = null;
+
+// Open (and upgrade if needed) the IndexedDB database.
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);   // key-value store; we use put(value, key)
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Render an HTMLImageElement to a PNG data URL. If the image hasn't
+// finished loading (or is cross-origin-tainted), fall back to its src.
+function imageToDataURL(img) {
+  try {
+    const tmp = document.createElement('canvas');
+    tmp.width = img.naturalWidth || img.width;
+    tmp.height = img.naturalHeight || img.height;
+    tmp.getContext('2d').drawImage(img, 0, 0);
+    return tmp.toDataURL('image/png');
+  } catch (e) {
+    return img.src || '';
+  }
+}
+
+// Decode a data URL back into an HTMLImageElement.
+function loadImageFromDataURL(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(new Image());   // resolve empty on failure; drawObject guards null
+    img.src = dataUrl;
+  });
+}
+
+// Convert a single history object into a JSON-safe representation.
+// Only images need special handling (HTMLImageElement -> data URL).
+function serializeObject(obj) {
+  if (obj.type === 'image' && obj.img) {
+    const copy = Object.assign({}, obj);
+    copy.dataUrl = imageToDataURL(obj.img);
+    delete copy.img;
+    return copy;
+  }
+  return obj;
+}
+
+// Convert a serialized object back into its live form.
+// Images are decoded asynchronously; the object is returned immediately
+// and its img property is populated once decoding completes.
+function deserializeObject(obj) {
+  if (obj.type === 'image' && obj.dataUrl) {
+    const dataUrl = obj.dataUrl;
+    const copy = Object.assign({}, obj);
+    delete copy.dataUrl;
+    copy.img = null;
+    loadImageFromDataURL(dataUrl).then((img) => {
+      copy.img = img;
+      fullRedraw();
+    });
+    return copy;
+  }
+  return obj;
+}
+
+// Serialize the full document state into a JSON-safe object.
+function serializeState() {
+  return {
+    version: DB_VERSION,
+    savedAt: Date.now(),
+    objects: history.map(serializeObject),
+    view: { panX, panY, viewScale },
+    theme: { isDark },
+    meta: { canvasName, startTime: canvasStartTime.getTime() }
+  };
+}
+
+// Restore the full document state from a saved object.
+function deserializeState(state) {
+  history = state.objects.map(deserializeObject);
+  future = [];
+  undoStack = [];
+  redoStack = [];
+  selectedIndex = -1;
+  dragMoveInfo = null;
+  shapeStart = null;
+  shapeEnd = null;
+
+  if (state.view) {
+    panX = state.view.panX;
+    panY = state.view.panY;
+    viewScale = state.view.viewScale;
+  }
+  if (state.theme && typeof state.theme.isDark === 'boolean') {
+    isDark = state.theme.isDark;
+    document.documentElement.classList.toggle('light', !isDark);
+  }
+  if (state.meta) {
+    canvasName = state.meta.canvasName || '';
+    canvasStartTime = state.meta.startTime ? new Date(state.meta.startTime) : new Date();
+  }
+}
+
+// Save the current state to IndexedDB (debounced).
+// No-ops silently if IndexedDB is unavailable (private mode, old browser, etc.).
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveNow().catch(() => { /* storage unavailable — ignore */ });
+  }, SAVE_DELAY_MS);
+}
+
+function saveNow() {
+  return openDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(serializeState(), SAVE_KEY);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  }));
+}
+
+// Load the saved state from IndexedDB. Returns the state object or null.
+function loadState() {
+  return openDB().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(SAVE_KEY);
+    req.onsuccess = () => { db.close(); resolve(req.result || null); };
+    req.onerror = () => { db.close(); reject(req.error); };
+  }));
+}
+
+// Flush any pending debounced save immediately (used on tab close / hide).
+function flushSave() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    return saveNow().catch(() => {});
+  }
+  return Promise.resolve();
+}
+
 // ── Boot ──────────────────────────────────────────────────
-initCanvasView();
+(async function boot() {
+  let restored = false;
+  try {
+    const state = await loadState();
+    if (state && state.objects) {
+      deserializeState(state);
+      restored = true;
+    }
+  } catch (e) {
+    // IndexedDB unavailable — start fresh
+  }
+
+  resizeCanvas();
+  if (!restored) {
+    // No saved draft: centre the default viewport
+    viewScale = 1;
+    panX = canvasWrap.offsetWidth / 2;
+    panY = canvasWrap.offsetHeight / 2;
+  }
+  syncUndoRedo();
+  fullRedraw();
+
+  // Persist on tab close / page hide so the latest state is always saved
+  window.addEventListener('beforeunload', flushSave);
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSave();
+  });
+})();
