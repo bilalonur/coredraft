@@ -47,7 +47,6 @@ function toWorld(screenX, screenY) {
 // HISTORY + UNDO / REDO
 // ════════════════════════════════════════════════════════
 let history = [];   // committed objects
-let future = [];    // objects popped by undo, available for redo
 
 // Undo stack holds action descriptors. Each action knows how to undo/redo itself:
 //   { type: 'add', obj }              — undo: remove obj, redo: re-add obj
@@ -60,7 +59,6 @@ let redoStack = [];
 // Push a new object onto history and record an 'add' action for undo.
 function pushHistory(obj) {
   history.push(obj);
-  future = [];
   undoStack.push({ type: 'add', obj });
   redoStack = [];
   syncUndoRedo();
@@ -72,11 +70,9 @@ function undo() {
   if (action.type === 'add') {
     const idx = history.indexOf(action.obj);
     if (idx !== -1) history.splice(idx, 1);
-    future.push(action.obj);
     redoStack.push(action);
   } else if (action.type === 'remove') {
     history.push(action.obj);
-    future = [];
     redoStack.push(action);
   } else if (action.type === 'move') {
     restorePosition(action.obj, action.from);
@@ -99,12 +95,10 @@ function redo() {
   const action = redoStack.pop();
   if (action.type === 'add') {
     history.push(action.obj);
-    future = [];
     undoStack.push(action);
   } else if (action.type === 'remove') {
     const idx = history.indexOf(action.obj);
     if (idx !== -1) history.splice(idx, 1);
-    future.push(action.obj);
     undoStack.push(action);
   } else if (action.type === 'move') {
     restorePosition(action.obj, action.to);
@@ -252,89 +246,14 @@ function drawStroke(context, obj) {
   }
 }
 
-// ── Geometric eraser ─────────────────────────────────────
+// ── Geometric eraser ─────────────────────────────────
 // The eraser modifies the actual geometry of the objects it touches:
 // strokes get split into fragments clipped at the exact eraser-circle
 // boundary, so only the portion under the eraser is removed — not the
 // whole segment. This means erased regions travel with their objects.
-
-// Compute the interval [t1, t2] ⊆ [0,1] along segment AB that falls
-// inside the eraser circle (center ex,ey, radius er).
-// Returns null when the segment does not overlap the circle.
-function circleSegmentInterval(ax, ay, bx, by, ex, ey, er) {
-  const dx = bx - ax, dy = by - ay;
-  const fx = ax - ex, fy = ay - ey;
-  const a = dx * dx + dy * dy;
-  const b = 2 * (fx * dx + fy * dy);
-  const c = fx * fx + fy * fy - er * er;
-
-  if (a === 0) return c <= 0 ? [0, 1] : null;       // degenerate (point) segment
-  const disc = b * b - 4 * a * c;
-  if (disc < 0) return c < 0 ? [0, 1] : null;        // line misses circle entirely
-
-  const sq = Math.sqrt(disc);
-  const lo = Math.max(0, (-b - sq) / (2 * a));
-  const hi = Math.min(1, (-b + sq) / (2 * a));
-  return lo <= hi ? [lo, hi] : null;
-}
-
-// Merge overlapping / adjacent [lo, hi] intervals into a sorted list.
-function mergeIntervals(intervals) {
-  if (intervals.length === 0) return [];
-  intervals.sort((a, b) => a[0] - b[0]);
-  const merged = [[intervals[0][0], intervals[0][1]]];
-  for (let i = 1; i < intervals.length; i++) {
-    const last = merged[merged.length - 1];
-    if (intervals[i][0] <= last[1]) {
-      last[1] = Math.max(last[1], intervals[i][1]);
-    } else {
-      merged.push([intervals[i][0], intervals[i][1]]);
-    }
-  }
-  return merged;
-}
-
-// Return the gaps (surviving regions) between merged intervals, within [lo, hi].
-function complementIntervals(merged, lo, hi) {
-  const result = [];
-  let cursor = lo;
-  for (const [m0, m1] of merged) {
-    if (cursor < m0) result.push([cursor, m0]);
-    cursor = Math.max(cursor, m1);
-  }
-  if (cursor < hi) result.push([cursor, hi]);
-  return result;
-}
-
-// Sample points along a shape defined by two corners (for rect/circle/line/arrow).
-// Returns an array of {x, y} points on the shape's outline.
-function sampleShapePoints(obj) {
-  const pts = [];
-  const steps = 48;
-  if (obj.type === 'line' || obj.type === 'arrow') {
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      pts.push({ x: obj.x1 + (obj.x2 - obj.x1) * t, y: obj.y1 + (obj.y2 - obj.y1) * t });
-    }
-  } else if (obj.type === 'rect') {
-    const x1 = Math.min(obj.x1, obj.x2), x2 = Math.max(obj.x1, obj.x2);
-    const y1 = Math.min(obj.y1, obj.y2), y2 = Math.max(obj.y1, obj.y2);
-    const w = x2 - x1, h = y2 - y1;
-    const per = Math.max(1, Math.floor(steps / 4));
-    for (let i = 0; i < per; i++) pts.push({ x: x1 + w * i / per, y: y1 });
-    for (let i = 0; i < per; i++) pts.push({ x: x2, y: y1 + h * i / per });
-    for (let i = 0; i < per; i++) pts.push({ x: x2 - w * i / per, y: y2 });
-    for (let i = 0; i < per; i++) pts.push({ x: x1, y: y2 - h * i / per });
-  } else if (obj.type === 'circle') {
-    const cx = (obj.x1 + obj.x2) / 2, cy = (obj.y1 + obj.y2) / 2;
-    const rx = Math.abs(obj.x2 - obj.x1) / 2, ry = Math.abs(obj.y2 - obj.y1) / 2;
-    for (let i = 0; i <= steps; i++) {
-      const a = (i / steps) * Math.PI * 2;
-      pts.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
-    }
-  }
-  return pts;
-}
+// The interval math (circleSegmentInterval, mergeIntervals,
+// complementIntervals) and shape sampling (sampleShapePoints) live in
+// geometry.js so they can be unit-tested in Node without a DOM.
 
 // Check if a text object intersects the eraser circle.
 function textIntersectsEraser(obj, ex, ey, er) {
@@ -647,7 +566,15 @@ function applyTextSnapshot(obj, snap) {
 }
 
 // ── Full redraw ───────────────────────────────────────────
-function fullRedraw() {
+// Coalesces redraw requests: multiple fullRedraw() calls within the same
+// frame (e.g. mousemove handlers firing faster than the display refresh)
+// collapse into a single paint. renderFrame() draws the scene plus any
+// transient overlays (eraser hover cursor) that must not be persisted.
+let eraserHoverPoint = null; // world-space point under the cursor when hovering with the eraser tool
+let redrawQueued = false;
+
+function renderFrame() {
+  redrawQueued = false;
   const width = canvasWrap.offsetWidth;
   const height = canvasWrap.offsetHeight;
   canvasContext.clearRect(0, 0, width, height);
@@ -662,6 +589,10 @@ function fullRedraw() {
     if (activeTextNode && activeTextNode.editIndex === i) continue;
     drawObject(canvasContext, history[i]);
   }
+
+  // In-progress stroke (not yet committed to history) so a redraw triggered
+  // mid-stroke (resize, tool switch) doesn't visually drop the uncommitted part.
+  if (currentStroke && !currentStroke.isErase) drawStroke(canvasContext, currentStroke);
 
   // Live shape preview
   if (shapeStart && shapeEnd) drawShapePreview(canvasContext);
@@ -679,8 +610,19 @@ function fullRedraw() {
   }
 
   canvasContext.restore();
+
+  // Eraser hover cursor — drawn in screen space after the world transform is
+  // restored, so it stays crisp regardless of zoom level.
+  if (eraserHoverPoint) drawEraserCursor(eraserHoverPoint);
+
   document.getElementById('zoom-level').textContent = Math.round(viewScale * 100) + '%';
   scheduleSave();
+}
+
+function fullRedraw() {
+  if (redrawQueued) return;
+  redrawQueued = true;
+  requestAnimationFrame(renderFrame);
 }
 
 // ── Arrow ─────────────────────────────────────────────────
@@ -830,6 +772,7 @@ const TOOL_BUTTON_IDS = {
 
 function setTool(t) {
   commitText();
+  eraserHoverPoint = null;
   if (tool === 'select' && t !== 'select') {
     selectedIndex = -1;
     dragMoveInfo = null;
@@ -875,8 +818,8 @@ function startStroke(worldPoint) {
   if (tool === 'eraser') {
     eraserUndoEntries = [];
     applyEraserPath([strokePoints[0]], eraserUndoEntries);
+    eraserHoverPoint = strokePoints[0];
     fullRedraw();
-    drawEraserCursor(strokePoints[0]);
   }
 }
 
@@ -907,8 +850,8 @@ function continueStroke(worldPoint) {
   if (tool === 'eraser') {
     // Apply eraser incrementally: only the latest point so erasing is visible live
     applyEraserPath([strokePoints[strokePoints.length - 1]], eraserUndoEntries);
+    eraserHoverPoint = strokePoints[strokePoints.length - 1];
     fullRedraw();
-    drawEraserCursor(strokePoints[strokePoints.length - 1]);
     return;
   }
 
@@ -958,7 +901,6 @@ function endStroke(worldPoint) {
     if (eraserUndoEntries.length > 0) {
       undoStack.push({ type: 'erase', entries: eraserUndoEntries });
       redoStack = [];
-      future = [];
       syncUndoRedo();
     }
     eraserUndoEntries = [];
@@ -968,6 +910,7 @@ function endStroke(worldPoint) {
   currentStroke = null;
   strokePoints = [];
   lastVelocity = 0;
+  eraserHoverPoint = null;
   fullRedraw();
 }
 
@@ -1275,9 +1218,9 @@ canvas.addEventListener('mousemove', (e) => {
   }
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) continueStroke(worldPoint);
   if (tool === 'eraser' && !isDrawing) {
-    // Show eraser circle cursor on hover
+    // Track the hover point so renderFrame() draws the eraser cursor
+    eraserHoverPoint = { x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, brushSize) };
     fullRedraw();
-    drawEraserCursor({ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, brushSize) });
   }
   if (SHAPE_TOOLS.has(tool) && shapeStart) {
     shapeEnd = worldPoint;
@@ -1320,7 +1263,7 @@ canvas.addEventListener('mouseleave', (e) => {
   const worldPoint = toWorld(sx, sy);
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) endStroke(worldPoint);
   // Clear eraser hover preview
-  if (tool === 'eraser' && !isDrawing) fullRedraw();
+  if (tool === 'eraser' && !isDrawing) { eraserHoverPoint = null; fullRedraw(); }
   if (SHAPE_TOOLS.has(tool) && shapeStart) {
     shapeStart = null;
     shapeEnd = null;
@@ -1384,7 +1327,14 @@ canvasWrap.addEventListener('wheel', (e) => {
 
 // ── Keyboard ──────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
-  if (e.target === textInput) return;
+  // Ignore keystrokes while any text field is focused (text overlay, canvas
+  // name, font size) so typing there doesn't switch tools or nudge objects.
+  const target = e.target;
+  if (target === textInput || target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' ||
+      target.isContentEditable) {
+    return;
+  }
 
   // Undo / Redo
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); bcFlashButton('undo-button'); return; }
@@ -1560,7 +1510,6 @@ function resetCanvas() {
   if (!confirm('Clear everything?')) return;
   commitText();
   history = [];
-  future = [];
   undoStack = [];
   redoStack = [];
   selectedIndex = -1;
@@ -1956,7 +1905,6 @@ function serializeState() {
 // Restore the full document state from a saved object.
 function deserializeState(state) {
   history = state.objects.map(deserializeObject);
-  future = [];
   undoStack = [];
   redoStack = [];
   selectedIndex = -1;
