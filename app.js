@@ -52,6 +52,7 @@ let history = [];   // committed objects
 //   { type: 'add', obj }              — undo: remove obj, redo: re-add obj
 //   { type: 'remove', obj }           — undo: re-add obj, redo: remove obj
 //   { type: 'move', obj, from, to }   — undo: restore obj position to 'from', redo: to 'to'
+//   { type: 'resize', obj, from, to } — undo/redo object geometry
 //   { type: 'erase', entries }        — undo: reverse each entry, redo: re-apply
 let undoStack = [];
 let redoStack = [];
@@ -77,6 +78,9 @@ function undo() {
   } else if (action.type === 'move') {
     restorePosition(action.obj, action.from);
     redoStack.push(action);
+  } else if (action.type === 'resize') {
+    restoreGeometry(action.obj, action.from);
+    redoStack.push(action);
   } else if (action.type === 'editText') {
     applyTextSnapshot(action.obj, action.from);
     redoStack.push(action);
@@ -86,6 +90,7 @@ function undo() {
   }
   selectedIndex = -1;
   dragMoveInfo = null;
+  dragResizeInfo = null;
   syncUndoRedo();
   fullRedraw();
 }
@@ -103,6 +108,9 @@ function redo() {
   } else if (action.type === 'move') {
     restorePosition(action.obj, action.to);
     undoStack.push(action);
+  } else if (action.type === 'resize') {
+    restoreGeometry(action.obj, action.to);
+    undoStack.push(action);
   } else if (action.type === 'editText') {
     applyTextSnapshot(action.obj, action.to);
     undoStack.push(action);
@@ -112,6 +120,7 @@ function redo() {
   }
   selectedIndex = -1;
   dragMoveInfo = null;
+  dragResizeInfo = null;
   syncUndoRedo();
   fullRedraw();
 }
@@ -557,6 +566,203 @@ function restorePosition(obj, snap) {
   }
 }
 
+// Geometry snapshots are independent from the live object so resizing can be
+// previewed without accumulating rounding errors and committed as one undo step.
+function snapshotGeometry(obj) {
+  if (obj.type === 'stroke') return { pts: obj.pts.map(p => ({ x: p.x, y: p.y })) };
+  if (obj.type === 'image') return { x: obj.x, y: obj.y, w: obj.w, h: obj.h };
+  if (obj.type === 'line' || obj.type === 'arrow' || obj.type === 'rect' || obj.type === 'circle') {
+    return { x1: obj.x1, y1: obj.y1, x2: obj.x2, y2: obj.y2 };
+  }
+  return snapshotPosition(obj);
+}
+
+function restoreGeometry(obj, snap) {
+  if (obj.type === 'stroke') {
+    for (let i = 0; i < obj.pts.length; i++) {
+      obj.pts[i].x = snap.pts[i].x;
+      obj.pts[i].y = snap.pts[i].y;
+    }
+  } else if (obj.type === 'image') {
+    obj.x = snap.x; obj.y = snap.y; obj.w = snap.w; obj.h = snap.h;
+  } else if (obj.type !== 'text') {
+    obj.x1 = snap.x1; obj.y1 = snap.y1; obj.x2 = snap.x2; obj.y2 = snap.y2;
+  }
+}
+
+const RESIZE_HANDLE_PX = 8;
+const RESIZE_HIT_PX = 14;
+const MIN_RESIZE_PX = 8;
+
+function getResizeHandles(obj) {
+  if (!obj || obj.type === 'text') return [];
+  if (obj.type === 'line' || obj.type === 'arrow') {
+    return [
+      { id: 'start', x: obj.x1, y: obj.y1, cursor: 'crosshair' },
+      { id: 'end', x: obj.x2, y: obj.y2, cursor: 'crosshair' }
+    ];
+  }
+  const b = getResizeBounds(obj);
+  return [
+    { id: 'nw', x: b.minX, y: b.minY, cursor: 'nwse-resize' },
+    { id: 'ne', x: b.maxX, y: b.minY, cursor: 'nesw-resize' },
+    { id: 'se', x: b.maxX, y: b.maxY, cursor: 'nwse-resize' },
+    { id: 'sw', x: b.minX, y: b.maxY, cursor: 'nesw-resize' }
+  ];
+}
+
+// Strokes resize by their point geometry, not their painted thickness. This
+// keeps the handles and transform consistent while preserving brush widths.
+function getResizeBounds(obj) {
+  if (obj.type !== 'stroke') return getObjectBounds(obj);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of obj.pts) {
+    minX = Math.min(minX, point.x); minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+function hitTestResizeHandle(worldPoint) {
+  if (selectedIndex < 0 || selectedIndex >= history.length) return null;
+  const radius = RESIZE_HIT_PX / (2 * viewScale);
+  for (const handle of getResizeHandles(history[selectedIndex])) {
+    if (Math.abs(worldPoint.x - handle.x) <= radius && Math.abs(worldPoint.y - handle.y) <= radius) return handle;
+  }
+  return null;
+}
+
+function beginResize(index, handle, worldPoint) {
+  const obj = history[index];
+  dragResizeInfo = {
+    index,
+    handle: handle.id,
+    startSnap: snapshotGeometry(obj),
+    startBounds: getResizeBounds(obj),
+    startPointer: { x: worldPoint.x, y: worldPoint.y },
+    moved: false
+  };
+  canvas.style.cursor = handle.cursor;
+}
+
+function resizeFromCorner(obj, info, worldPoint, shiftKey) {
+  const b = info.startBounds;
+  const west = info.handle === 'nw' || info.handle === 'sw';
+  const north = info.handle === 'nw' || info.handle === 'ne';
+  const anchorX = west ? b.maxX : b.minX;
+  const anchorY = north ? b.maxY : b.minY;
+  const signX = west ? -1 : 1;
+  const signY = north ? -1 : 1;
+  const minWorld = MIN_RESIZE_PX / viewScale;
+  let width = signX * (worldPoint.x - anchorX);
+  let height = signY * (worldPoint.y - anchorY);
+  const lockRatio = obj.type === 'image' ? !shiftKey : shiftKey;
+  const rawStartW = b.maxX - b.minX;
+  const rawStartH = b.maxY - b.minY;
+  const startW = Math.max(0.0001, rawStartW);
+  const startH = Math.max(0.0001, rawStartH);
+
+  if (lockRatio) {
+    const minimumScale = Math.max(minWorld / startW, minWorld / startH);
+    const scale = Math.max(minimumScale, width / startW, height / startH);
+    width = startW * scale;
+    height = startH * scale;
+  } else {
+    width = Math.max(minWorld, width);
+    height = Math.max(minWorld, height);
+  }
+
+  const minX = signX < 0 ? anchorX - width : anchorX;
+  const minY = signY < 0 ? anchorY - height : anchorY;
+  const scaleX = width / startW;
+  const scaleY = height / startH;
+  restoreGeometry(obj, info.startSnap);
+
+  if (obj.type === 'image') {
+    obj.x = minX; obj.y = minY; obj.w = width; obj.h = height;
+  } else if (obj.type === 'stroke') {
+    for (let i = 0; i < obj.pts.length; i++) {
+      const source = info.startSnap.pts[i];
+      // A perfectly horizontal/vertical stroke has no point geometry to scale
+      // on that axis, so leave that coordinate anchored instead of inventing it.
+      obj.pts[i].x = rawStartW > 0.0001 ? minX + (source.x - b.minX) * scaleX : source.x;
+      obj.pts[i].y = rawStartH > 0.0001 ? minY + (source.y - b.minY) * scaleY : source.y;
+    }
+  } else {
+    obj.x1 = minX + (info.startSnap.x1 - b.minX) * scaleX;
+    obj.y1 = minY + (info.startSnap.y1 - b.minY) * scaleY;
+    obj.x2 = minX + (info.startSnap.x2 - b.minX) * scaleX;
+    obj.y2 = minY + (info.startSnap.y2 - b.minY) * scaleY;
+  }
+}
+
+function updateResize(worldPoint, shiftKey) {
+  if (!dragResizeInfo) return;
+  const info = dragResizeInfo;
+  const obj = history[info.index];
+  if (info.handle === 'start' || info.handle === 'end') {
+    restoreGeometry(obj, info.startSnap);
+    const fixedX = info.handle === 'start' ? info.startSnap.x2 : info.startSnap.x1;
+    const fixedY = info.handle === 'start' ? info.startSnap.y2 : info.startSnap.y1;
+    let x = worldPoint.x, y = worldPoint.y;
+    const dx = x - fixedX, dy = y - fixedY;
+    const minWorld = MIN_RESIZE_PX / viewScale;
+    const distance = Math.hypot(dx, dy);
+    if (distance < minWorld) {
+      const originalX = info.handle === 'start' ? info.startSnap.x1 : info.startSnap.x2;
+      const originalY = info.handle === 'start' ? info.startSnap.y1 : info.startSnap.y2;
+      const fallbackAngle = Math.atan2(originalY - fixedY, originalX - fixedX);
+      const angle = distance > 0.001 ? Math.atan2(dy, dx) : fallbackAngle;
+      x = fixedX + Math.cos(angle) * minWorld;
+      y = fixedY + Math.sin(angle) * minWorld;
+    }
+    if (info.handle === 'start') { obj.x1 = x; obj.y1 = y; }
+    else { obj.x2 = x; obj.y2 = y; }
+  } else {
+    resizeFromCorner(obj, info, worldPoint, shiftKey);
+  }
+  info.moved = Math.hypot(worldPoint.x - info.startPointer.x, worldPoint.y - info.startPointer.y) > 0.01;
+  fullRedraw();
+}
+
+function finishResize() {
+  if (!dragResizeInfo) return;
+  const info = dragResizeInfo;
+  if (info.moved) {
+    const obj = history[info.index];
+    undoStack.push({ type: 'resize', obj, from: info.startSnap, to: snapshotGeometry(obj) });
+    redoStack = [];
+    syncUndoRedo();
+  }
+  dragResizeInfo = null;
+  canvas.style.cursor = CURSORS[tool];
+}
+
+function startSelectInteraction(worldPoint) {
+  const resizeHandle = hitTestResizeHandle(worldPoint);
+  if (resizeHandle) {
+    beginResize(selectedIndex, resizeHandle, worldPoint);
+    fullRedraw();
+    return;
+  }
+
+  const hit = hitTestAny(worldPoint);
+  if (hit !== -1) {
+    selectedIndex = hit;
+    const obj = history[hit];
+    dragMoveInfo = {
+      index: hit,
+      lastWorld: { x: worldPoint.x, y: worldPoint.y },
+      startSnap: snapshotPosition(obj),
+      moved: false
+    };
+    canvas.style.cursor = 'grabbing';
+  } else {
+    selectedIndex = -1;
+  }
+  fullRedraw();
+}
+
 // Apply a text-content snapshot (lines, color, font, lineH) to a text object.
 function applyTextSnapshot(obj, snap) {
   obj.lines = snap.lines.slice();
@@ -607,6 +813,14 @@ function renderFrame() {
     canvasContext.setLineDash([6 / viewScale, 4 / viewScale]);
     canvasContext.strokeRect(b.minX - pad, b.minY - pad, b.maxX - b.minX + pad * 2, b.maxY - b.minY + pad * 2);
     canvasContext.setLineDash([]);
+    const handleSize = RESIZE_HANDLE_PX / viewScale;
+    canvasContext.fillStyle = isDark ? '#c8a96e' : '#8a6a2a';
+    canvasContext.strokeStyle = isDark ? '#0e0e0e' : '#f5f3ef';
+    canvasContext.lineWidth = 1 / viewScale;
+    for (const handle of getResizeHandles(obj)) {
+      canvasContext.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+      canvasContext.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+    }
   }
 
   canvasContext.restore();
@@ -746,6 +960,7 @@ let textBold = false, textItalic = false;
 let activeTextNode = null;
 let selectedIndex = -1;    // index in history of the selected object, -1 = none
 let dragMoveInfo = null;   // { index, lastWorld, startSnap } — active move in select tool
+let dragResizeInfo = null; // active corner/endpoint resize in select tool
 let eraserUndoEntries = []; // accumulates undo entries during a live eraser drag
 // Draw-tool stroke refinement, applied on release. The two modes are
 // mutually exclusive: both rewrite the stroke, so running them together
@@ -759,7 +974,7 @@ const CURSORS = {
   rect: 'crosshair', circle: 'crosshair', text: 'text', pan: 'grab'
 };
 const STATUSES = {
-  select:  'Select · Click object to select · Drag to move · Double-click text to edit',
+  select:  'Select · Drag object to move · Drag handles to resize · Double-click text to edit',
   draw:    'Draw · Scroll=zoom · Space/middle=pan',
   eraser:  'Eraser · Drag to erase',
   arrow:   'Arrow · Click & drag',
@@ -781,6 +996,7 @@ function setTool(t) {
   if (tool === 'select' && t !== 'select') {
     selectedIndex = -1;
     dragMoveInfo = null;
+    dragResizeInfo = null;
   }
   tool = t;
   Object.entries(TOOL_BUTTON_IDS).forEach(([key, id]) => {
@@ -1284,21 +1500,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (textInput.style.display === 'block' && tool !== 'text') commitText();
 
   if (tool === 'select') {
-    const hit = hitTestAny(worldPoint);
-    if (hit !== -1) {
-      selectedIndex = hit;
-      const obj = history[hit];
-      dragMoveInfo = {
-        index: hit,
-        lastWorld: { x: worldPoint.x, y: worldPoint.y },
-        startSnap: snapshotPosition(obj),
-        moved: false
-      };
-      canvas.style.cursor = 'grabbing';
-    } else {
-      selectedIndex = -1;
-    }
-    fullRedraw();
+    startSelectInteraction(worldPoint);
   } else if (tool === 'pan') {
     isPanning = true;
     panStart = { ox: panX - e.clientX, oy: panY - e.clientY };
@@ -1337,6 +1539,14 @@ canvas.addEventListener('mousemove', (e) => {
     fullRedraw();
     return;
   }
+  if (dragResizeInfo) {
+    updateResize(worldPoint, e.shiftKey);
+    return;
+  }
+  if (tool === 'select') {
+    const handle = hitTestResizeHandle(worldPoint);
+    canvas.style.cursor = handle ? handle.cursor : CURSORS.select;
+  }
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) continueStroke(worldPoint);
   if (tool === 'eraser' && !isDrawing) {
     // Track the hover point so renderFrame() draws the eraser cursor
@@ -1371,6 +1581,8 @@ canvas.addEventListener('mouseup', (e) => {
     }
     dragMoveInfo = null;
     canvas.style.cursor = CURSORS[tool];
+  } else if (dragResizeInfo) {
+    finishResize();
   } else if (tool === 'draw' || tool === 'eraser') {
     endStroke(worldPoint);
   } else if (SHAPE_TOOLS.has(tool) && shapeStart) {
@@ -1402,6 +1614,7 @@ canvas.addEventListener('mouseleave', (e) => {
     dragMoveInfo = null;
     canvas.style.cursor = CURSORS[tool];
   }
+  if (dragResizeInfo) finishResize();
   middleMouseDown = false;
 });
 
@@ -1565,7 +1778,7 @@ function bcSetExpanded(expanded) {
 // Returns true if the user is actively interacting with the canvas
 // (drawing, panning, dragging an object, or mid-shape).
 function bcIsInteracting() {
-  return isDrawing || isPanning || dragMoveInfo !== null || shapeStart !== null;
+  return isDrawing || isPanning || dragMoveInfo !== null || dragResizeInfo !== null || shapeStart !== null;
 }
 
 // Called on every mousemove anywhere in the document.
@@ -1647,6 +1860,7 @@ function resetCanvas() {
   redoStack = [];
   selectedIndex = -1;
   dragMoveInfo = null;
+  dragResizeInfo = null;
   shapeStart = null;
   shapeEnd = null;
   eraserUndoEntries = [];
@@ -1855,20 +2069,7 @@ canvas.addEventListener('touchstart', (e) => {
   const worldPoint = toWorld(sx, sy);
 
   if (tool === 'select') {
-    const hit = hitTestAny(worldPoint);
-    if (hit !== -1) {
-      selectedIndex = hit;
-      const obj = history[hit];
-      dragMoveInfo = {
-        index: hit,
-        lastWorld: { x: worldPoint.x, y: worldPoint.y },
-        startSnap: snapshotPosition(obj),
-        moved: false
-      };
-    } else {
-      selectedIndex = -1;
-    }
-    fullRedraw();
+    startSelectInteraction(worldPoint);
   } else if (tool === 'draw' || tool === 'eraser') {
     startStroke(worldPoint);
   } else if (SHAPE_TOOLS.has(tool)) {
@@ -1908,6 +2109,10 @@ canvas.addEventListener('touchmove', (e) => {
     fullRedraw();
     return;
   }
+  if (dragResizeInfo) {
+    updateResize(worldPoint, false);
+    return;
+  }
   if (tool === 'draw' || tool === 'eraser') continueStroke(worldPoint);
   else if (SHAPE_TOOLS.has(tool) && shapeStart) { shapeEnd = worldPoint; fullRedraw(); }
 }, { passive: false });
@@ -1927,6 +2132,8 @@ canvas.addEventListener('touchend', (e) => {
       syncUndoRedo();
     }
     dragMoveInfo = null;
+  } else if (dragResizeInfo) {
+    finishResize();
   } else if (tool === 'draw' || tool === 'eraser') {
     endStroke(worldPoint);
   } else if (SHAPE_TOOLS.has(tool) && shapeStart) {
@@ -2042,6 +2249,7 @@ function deserializeState(state) {
   redoStack = [];
   selectedIndex = -1;
   dragMoveInfo = null;
+  dragResizeInfo = null;
   shapeStart = null;
   shapeEnd = null;
 
