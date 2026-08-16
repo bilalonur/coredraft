@@ -4,6 +4,9 @@
 
 const devicePixelRatio = window.devicePixelRatio || 1;
 const PALETTE_COLORS = ['#e8e0c8', '#c8a96e', '#e87c5a', '#5ab0e8', '#7de87a', '#c87de8', '#e8e85a', '#e85a8b', '#5ae8d4', '#444444'];
+// Sticky-note pads. Muted pastels rather than the saturated drawing palette:
+// they carry a paragraph of text without fighting the strokes around them.
+const STICKY_COLORS = ['#f5df8f', '#f7c3cd', '#c3e8b6', '#bcdcf7', '#dfcdf7', '#f7cfae', '#efece1', '#cdd3d9'];
 const FALLBACK_WORDS = ['banaz', 'porsuk', 'aksu', 'anamur', 'biga', 'kali', 'maden', 'melen', 'meydan', 'munzur', 'sabun', 'sarisu', 'sariz', 'terme'];
 
 const canvasWrap = document.getElementById('canvas-wrap');
@@ -52,6 +55,8 @@ let history = [];   // committed objects
 //   { type: 'add', obj }              — undo: remove obj, redo: re-add obj
 //   { type: 'remove', obj }           — undo: re-add obj, redo: remove obj
 //   { type: 'move', obj, from, to }   — undo: restore obj position to 'from', redo: to 'to'
+//   { type: 'editText', obj, from, to }   — undo/redo: swap the text snapshot
+//   { type: 'editSticky', obj, from, to } — undo/redo: swap the sticky-note snapshot
 //   { type: 'erase', entries }        — undo: reverse each entry, redo: re-apply
 let undoStack = [];
 let redoStack = [];
@@ -80,12 +85,16 @@ function undo() {
   } else if (action.type === 'editText') {
     applyTextSnapshot(action.obj, action.from);
     redoStack.push(action);
+  } else if (action.type === 'editSticky') {
+    applyStickySnapshot(action.obj, action.from);
+    redoStack.push(action);
   } else if (action.type === 'erase') {
     undoErase(action.entries);
     redoStack.push(action);
   }
   selectedIndex = -1;
   dragMoveInfo = null;
+  stickyResize = null;
   syncUndoRedo();
   fullRedraw();
 }
@@ -106,12 +115,16 @@ function redo() {
   } else if (action.type === 'editText') {
     applyTextSnapshot(action.obj, action.to);
     undoStack.push(action);
+  } else if (action.type === 'editSticky') {
+    applyStickySnapshot(action.obj, action.to);
+    undoStack.push(action);
   } else if (action.type === 'erase') {
     redoErase(action.entries);
     undoStack.push(action);
   }
   selectedIndex = -1;
   dragMoveInfo = null;
+  stickyResize = null;
   syncUndoRedo();
   fullRedraw();
 }
@@ -210,6 +223,8 @@ function drawObject(context, obj) {
   } else if (obj.type === 'image') {
     // Guard: during async restore the img may still be decoding.
     if (obj.img) context.drawImage(obj.img, obj.x, obj.y, obj.w, obj.h);
+  } else if (obj.type === 'sticky') {
+    drawSticky(context, obj);
   }
   context.restore();
 }
@@ -273,10 +288,10 @@ function textIntersectsEraser(obj, ex, ey, er) {
   return false;
 }
 
-// Check if an image object intersects the eraser circle.
-function imageIntersectsEraser(obj, ex, ey, er) {
-  return ex + er >= obj.x && ex - er <= obj.x + obj.w &&
-         ey + er >= obj.y && ey - er <= obj.y + obj.h;
+// Check if an axis-aligned box (image, sticky note) intersects the eraser circle.
+function boxIntersectsEraser(bounds, ex, ey, er) {
+  return ex + er >= bounds.minX && ex - er <= bounds.maxX &&
+         ey + er >= bounds.minY && ey - er <= bounds.maxY;
 }
 
 // Convert a shape (line, arrow, rect, circle) into a stroke-like object
@@ -334,10 +349,11 @@ function applyEraserPath(eraserPath, undoEntries) {
         history.splice(i, 1);
         undoEntries.unshift({ obj, removed: true });
       }
-    } else if (obj.type === 'image') {
+    } else if (obj.type === 'image' || obj.type === 'sticky') {
+      // Both are solid boxes: the eraser takes the whole pad, never a hole in it.
       let touched = false;
       for (const ep of eraserPath) {
-        if (imageIntersectsEraser(obj, ep.x, ep.y, ep.w / 2)) { touched = true; break; }
+        if (boxIntersectsEraser(getObjectBounds(obj), ep.x, ep.y, ep.w / 2)) { touched = true; break; }
       }
       if (touched) {
         history.splice(i, 1);
@@ -471,6 +487,8 @@ function getObjectBounds(obj) {
     return { minX, minY, maxX, maxY };
   } else if (obj.type === 'image') {
     return { minX: obj.x, minY: obj.y, maxX: obj.x + obj.w, maxY: obj.y + obj.h };
+  } else if (obj.type === 'sticky') {
+    return { minX: obj.x, minY: obj.y, maxX: obj.x + obj.width, maxY: obj.y + obj.height };
   } else if (obj.type === 'text') {
     canvasContext.save();
     canvasContext.font = obj.font;
@@ -525,7 +543,7 @@ function hitTestAny(worldPoint) {
 function translateObject(obj, dx, dy) {
   if (obj.type === 'stroke') {
     for (const p of obj.pts) { p.x += dx; p.y += dy; }
-  } else if (obj.type === 'image' || obj.type === 'text') {
+  } else if (obj.type === 'image' || obj.type === 'text' || obj.type === 'sticky') {
     obj.x += dx; obj.y += dy;
   } else {
     obj.x1 += dx; obj.y1 += dy; obj.x2 += dx; obj.y2 += dy;
@@ -536,7 +554,7 @@ function translateObject(obj, dx, dy) {
 function snapshotPosition(obj) {
   if (obj.type === 'stroke') {
     return obj.pts.map(p => ({ x: p.x, y: p.y }));
-  } else if (obj.type === 'image' || obj.type === 'text') {
+  } else if (obj.type === 'image' || obj.type === 'text' || obj.type === 'sticky') {
     return { x: obj.x, y: obj.y };
   } else {
     return { x1: obj.x1, y1: obj.y1, x2: obj.x2, y2: obj.y2 };
@@ -550,7 +568,7 @@ function restorePosition(obj, snap) {
       obj.pts[i].x = snap[i].x;
       obj.pts[i].y = snap[i].y;
     }
-  } else if (obj.type === 'image' || obj.type === 'text') {
+  } else if (obj.type === 'image' || obj.type === 'text' || obj.type === 'sticky') {
     obj.x = snap.x; obj.y = snap.y;
   } else {
     obj.x1 = snap.x1; obj.y1 = snap.y1; obj.x2 = snap.x2; obj.y2 = snap.y2;
@@ -587,6 +605,8 @@ function renderFrame() {
   for (let i = 0; i < history.length; i++) {
     // Skip the text object currently being edited — the textarea overlay shows it instead
     if (activeTextNode && activeTextNode.editIndex === i) continue;
+    // Same for a sticky note: the editor overlay stands in for it
+    if (stickyEditIndex === i) continue;
     drawObject(canvasContext, history[i]);
   }
 
@@ -607,6 +627,8 @@ function renderFrame() {
     canvasContext.setLineDash([6 / viewScale, 4 / viewScale]);
     canvasContext.strokeRect(b.minX - pad, b.minY - pad, b.maxX - b.minX + pad * 2, b.maxY - b.minY + pad * 2);
     canvasContext.setLineDash([]);
+    // Sticky notes are the one object with a size worth authoring by hand.
+    if (obj.type === 'sticky') drawStickyHandles(canvasContext, obj);
   }
 
   canvasContext.restore();
@@ -717,22 +739,197 @@ function toggleTheme() {
   fullRedraw();
 }
 
+// ════════════════════════════════════════════════════════
+// COLOUR PICKER
+// ════════════════════════════════════════════════════════
+// One popover shared by the toolbar palette and the sticky-note editor. The
+// grid is generated rather than written out: twelve hues in five steps of
+// lightness, plus a greyscale row, which covers far more ground than a
+// hand-written list without a wall of hex codes to maintain.
+
+const CP_HUES = [0, 20, 40, 60, 95, 135, 165, 190, 212, 250, 285, 320];
+const CP_STEPS = [
+  { s: 72, l: 86 },   // pastel — the pad colours live around here
+  { s: 68, l: 72 },
+  { s: 62, l: 58 },
+  { s: 58, l: 44 },
+  { s: 52, l: 30 }
+];
+const CP_GREYS = ['#ffffff', '#f0eee9', '#dcd9d2', '#c2beb6', '#a5a099', '#8a857d',
+                  '#6e6a63', '#54514b', '#3d3a35', '#2a2723', '#1a1917', '#000000'];
+
+// Colours the user picked themselves. Offered by both palettes and saved with
+// the document, because a custom colour that vanishes on reload is a colour
+// you have to mix again every session. Kept to a short queue in the order they
+// were added: a fourth colour pushes the first one out.
+let customColors = [];
+const MAX_CUSTOM_COLORS = 3;
+
+function hslToHex(h, s, l) {
+  const sat = s / 100;
+  const light = l / 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = sat * Math.min(light, 1 - light);
+  const f = (n) => light - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const hex = (n) => Math.round(255 * f(n)).toString(16).padStart(2, '0');
+  return `#${hex(0)}${hex(8)}${hex(4)}`;
+}
+
+function normalizeHex(value) {
+  const { r, g, b } = hexToRgb(value);
+  return `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function rememberCustomColor(color) {
+  const hex = normalizeHex(color);
+  if (PALETTE_COLORS.includes(hex) || STICKY_COLORS.includes(hex)) return;
+  // Already in the queue: leave it where it is rather than shuffling the row
+  // around under the cursor.
+  if (customColors.includes(hex)) return;
+
+  customColors.push(hex);
+  while (customColors.length > MAX_CUSTOM_COLORS) customColors.shift();   // oldest out
+  renderPalette();
+  renderStickySwatches();
+  scheduleSave();
+}
+
+const colorPopover = document.getElementById('color-popover');
+const colorGrid = document.getElementById('cp-grid');
+const colorCustomInput = document.getElementById('cp-custom');
+const colorHexLabel = document.getElementById('cp-hex');
+
+let colorPickerPick = null;    // callback for the control that opened it
+let colorPickerAnchor = null;
+
+// Build the grid once — it never changes.
+(function buildColorGrid() {
+  const cells = [];
+  for (const step of CP_STEPS) {
+    for (const hue of CP_HUES) cells.push(hslToHex(hue, step.s, step.l));
+  }
+  cells.push.apply(cells, CP_GREYS);
+  for (const color of cells) {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'cp-cell';
+    cell.dataset.color = color;
+    cell.style.background = color;
+    cell.title = color;
+    cell.setAttribute('aria-label', color);
+    cell.addEventListener('click', () => choosePickerColor(color));
+    colorGrid.appendChild(cell);
+  }
+})();
+
+function choosePickerColor(color) {
+  const hex = normalizeHex(color);
+  if (colorPickerPick) colorPickerPick(hex);
+  rememberCustomColor(hex);
+  closeColorPicker();
+}
+
+// anchor: the element the popover should sit under. onPick: what to do with
+// the chosen colour.
+function openColorPicker(anchor, current, onPick) {
+  colorPickerPick = onPick;
+  colorPickerAnchor = anchor;
+  const currentHex = current ? normalizeHex(current) : '';
+  colorCustomInput.value = /^#[0-9a-f]{6}$/i.test(currentHex) ? currentHex : '#c8a96e';
+  colorHexLabel.textContent = currentHex;
+  Array.from(colorGrid.children).forEach((cell) => {
+    cell.classList.toggle('on', cell.dataset.color === currentHex);
+  });
+
+  colorPopover.classList.remove('hidden');
+  const box = colorPopover.getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.max(margin, Math.min(rect.left + rect.width / 2 - box.width / 2,
+    window.innerWidth - box.width - margin));
+  let top = rect.bottom + 8;
+  if (top + box.height > window.innerHeight - margin) top = Math.max(margin, rect.top - box.height - 8);
+  colorPopover.style.left = `${left}px`;
+  colorPopover.style.top = `${top}px`;
+}
+
+function closeColorPicker() {
+  colorPopover.classList.add('hidden');
+  colorPickerPick = null;
+  colorPickerAnchor = null;
+}
+
+function isColorPickerOpen() {
+  return !colorPopover.classList.contains('hidden');
+}
+
+// Live preview while dragging the native picker; the value is kept on change.
+colorCustomInput.addEventListener('input', () => {
+  colorHexLabel.textContent = normalizeHex(colorCustomInput.value);
+  if (colorPickerPick) colorPickerPick(normalizeHex(colorCustomInput.value));
+});
+colorCustomInput.addEventListener('change', () => choosePickerColor(colorCustomInput.value));
+
+document.addEventListener('mousedown', (e) => {
+  if (!isColorPickerOpen()) return;
+  if (colorPopover.contains(e.target)) return;
+  if (colorPickerAnchor && colorPickerAnchor.contains(e.target)) return;
+  closeColorPicker();
+}, true);
+
+// Capture phase, so Escape closes the picker without also closing the sticky
+// editor underneath it.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isColorPickerOpen()) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeColorPicker();
+  }
+}, true);
+
 // ── Palette ───────────────────────────────────────────────
 let drawColor = PALETTE_COLORS[0];
 const colorPalette = document.getElementById('color-palette');
-PALETTE_COLORS.forEach((color, i) => {
-  const dot = document.createElement('div');
-  dot.className = 'color-dot' + (i === 0 ? ' on' : '');
-  dot.style.background = color;
-  dot.style.boxShadow = '0 0 0 1px #555';
-  dot.onclick = () => {
-    document.querySelectorAll('.color-dot').forEach((el) => el.classList.remove('on'));
-    dot.classList.add('on');
-    drawColor = color;
-    updateTextStyle();
+
+// Rebuilt whenever the custom colours change, so the trailing + button always
+// stays last in the row.
+function renderPalette() {
+  colorPalette.querySelectorAll('.color-dot, .color-add').forEach((el) => el.remove());
+
+  for (const color of PALETTE_COLORS.concat(customColors)) {
+    const dot = document.createElement('div');
+    dot.className = 'color-dot' + (color === drawColor ? ' on' : '');
+    dot.style.background = color;
+    dot.style.boxShadow = '0 0 0 1px #555';
+    dot.dataset.color = color;
+    dot.title = color;
+    dot.onclick = () => setDrawColor(color);
+    colorPalette.appendChild(dot);
+  }
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'color-add';
+  add.title = 'More colours';
+  add.setAttribute('aria-label', 'More colours');
+  add.textContent = '+';
+  add.onclick = (e) => {
+    e.stopPropagation();
+    if (isColorPickerOpen()) { closeColorPicker(); return; }
+    openColorPicker(add, drawColor, setDrawColor);
   };
-  colorPalette.appendChild(dot);
-});
+  colorPalette.appendChild(add);
+}
+
+function setDrawColor(color) {
+  drawColor = color;
+  colorPalette.querySelectorAll('.color-dot').forEach((el) => {
+    el.classList.toggle('on', el.dataset.color === color);
+  });
+  updateTextStyle();
+}
+
+renderPalette();
 
 // ── Tool state ────────────────────────────────────────────
 let tool = 'draw';
@@ -759,14 +956,14 @@ const CURSORS = {
   rect: 'crosshair', circle: 'crosshair', text: 'text', pan: 'grab'
 };
 const STATUSES = {
-  select:  'Select · Click object to select · Drag to move · Double-click text to edit',
+  select:  'Select · Drag to move or resize · Click a task box or link · Double-click to edit',
   draw:    'Draw · Scroll=zoom · Space/middle=pan',
   eraser:  'Eraser · Drag to erase',
   arrow:   'Arrow · Click & drag',
   line:    'Line · Click & drag',
   rect:    'Rectangle · Click & drag',
   circle:  'Circle / Ellipse · Click & drag',
-  text:    'Text · Click to place · Double-click text to edit',
+  text:    'Text · Click to place · [N] new Markdown sticky note · Double-click to edit',
   pan:     'Pan · Drag to move canvas'
 };
 
@@ -778,9 +975,11 @@ const TOOL_BUTTON_IDS = {
 function setTool(t) {
   commitText();
   eraserHoverPoint = null;
+  stickyHoverTask = null;
   if (tool === 'select' && t !== 'select') {
     selectedIndex = -1;
     dragMoveInfo = null;
+    stickyResize = null;
   }
   tool = t;
   Object.entries(TOOL_BUTTON_IDS).forEach(([key, id]) => {
@@ -790,6 +989,7 @@ function setTool(t) {
   canvas.style.cursor = CURSORS[t] || 'crosshair';
   statusBar.textContent = STATUSES[t] || '';
   syncSmartStrokeButtons();
+  syncStickyButton();
   fullRedraw();
 }
 
@@ -1237,6 +1437,1140 @@ function commitText() {
   textInput.value = '';
 }
 
+// ════════════════════════════════════════════════════════
+// MARKDOWN STICKY NOTES
+// ════════════════════════════════════════════════════════
+// A sticky is a coloured pad carrying Markdown, laid out and drawn straight
+// onto the canvas — no DOM node, so it pans, zooms, moves, erases and exports
+// exactly like every other scene object.
+//
+//   { type: 'sticky', x, y, width, height, rawText, bgColor, color, font,
+//     maxWidth?, minHeight? }
+//
+// rawText is the single source of truth; the block structure is re-derived by
+// markdown.js on every layout, so an edit can never leave a stale copy behind.
+// width/height are cached on the object because hit-testing and the selection
+// box need them without a canvas measurement pass.
+//
+// maxWidth / minHeight are only set once the user drags a resize handle. Until
+// then a note sizes itself to its text. After that the note wraps to the width
+// it was given and never shrinks below the height it was given — but it still
+// grows to fit text that no longer fits, so an edit can never clip itself.
+
+const STICKY_PAD = 18;          // inner padding around the text block
+const STICKY_FOLD = 22;         // size of the dog-eared bottom-right corner
+const STICKY_MIN_WIDTH = 170;
+const STICKY_MAX_WIDTH = 460;   // auto-sizing stops here; dragging can go wider
+const STICKY_RESIZE_MAX_WIDTH = 1400;
+const STICKY_MIN_HEIGHT = 86;
+const STICKY_LIST_INDENT = 17;  // per nesting level
+const STICKY_QUOTE_INDENT = 15;
+const STICKY_MONO = "'Fira Code','Courier New',monospace";
+
+// ── Colour helpers ───────────────────────────────────────
+function hexToRgb(hex) {
+  const m = String(hex).trim().match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return { r: 245, g: 223, b: 143 };
+  let h = m[1];
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+}
+
+// Blend a colour toward black (amount < 0) or white (amount > 0).
+function shadeColor(hex, amount) {
+  const { r, g, b } = hexToRgb(hex);
+  const target = amount < 0 ? 0 : 255;
+  const t = Math.abs(amount);
+  const mix = (c) => Math.round(c + (target - c) * t);
+  return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+}
+
+function withAlpha(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// Ink that stays readable on a given pad colour. The pads are pastels, so
+// this almost always lands on the dark ink — but a user-restored note from a
+// darker colour still gets legible text.
+function stickyInk(bgColor) {
+  const { r, g, b } = hexToRgb(bgColor);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.55 ? '#2b2723' : '#f4f1ea';
+}
+
+// Links need to read as links against the pad without shouting.
+function stickyLinkColor(bgColor) {
+  return stickyInk(bgColor) === '#2b2723' ? '#17518f' : '#9ecbff';
+}
+
+// ── Layout ───────────────────────────────────────────────
+// Split obj.font ("18px 'Inter',sans-serif") back into its parts so the
+// renderer can build bold / italic / heading variants of the same face.
+function stickyFontParts(obj) {
+  const match = /(\d+(?:\.\d+)?)px\s+(.+)$/.exec(obj.font || '');
+  if (!match) return { size: 16, family: "'Courier New',monospace" };
+  return { size: parseFloat(match[1]), family: match[2] };
+}
+
+// Per-block typography. Everything is derived from the note's base size so a
+// note set in 30px keeps its proportions.
+function stickyBlockStyle(block, base) {
+  const style = {
+    size: base,
+    bold: false,
+    italic: false,
+    indent: 0,
+    lineHeight: base * 1.45,
+    spaceBefore: 0,
+    muted: false
+  };
+  if (block.kind === 'heading') {
+    const scale = [1.55, 1.28, 1.1][block.level - 1] || 1.1;
+    style.size = base * scale;
+    style.bold = true;
+    style.lineHeight = style.size * 1.32;
+    style.spaceBefore = base * 0.55;
+  } else if (block.kind === 'bullet' || block.kind === 'ordered' || block.kind === 'task') {
+    style.indent = STICKY_LIST_INDENT * (block.indent + 1);
+  } else if (block.kind === 'quote') {
+    style.italic = true;
+    style.muted = true;
+    style.indent = STICKY_QUOTE_INDENT;
+  } else if (block.kind === 'rule') {
+    style.lineHeight = base * 1.1;
+  } else if (block.kind === 'blank') {
+    style.lineHeight = base * 0.62;
+  }
+  return style;
+}
+
+// CSS font string for one inline chunk drawn in a given block style.
+function stickyChunkFont(chunk, style, family) {
+  const italic = (chunk.italic || style.italic) ? 'italic ' : '';
+  const bold = (chunk.bold || style.bold) ? 'bold ' : '';
+  const size = chunk.code ? style.size * 0.92 : style.size;
+  return `${italic}${bold}${size}px ${chunk.code ? STICKY_MONO : family}`;
+}
+
+// Turn a note's Markdown into positioned rows plus the box size it needs.
+// Rows are relative to the note's top-left corner, so moving a note never
+// invalidates its layout.
+//
+//   { width, height, rows: [ { kind: 'line', y, x, pieces, marker, markerX, style }
+//                          | { kind: 'rule', y } ] }
+function layoutSticky(obj) {
+  const { size: base, family } = stickyFontParts(obj);
+  const blocks = parseMarkdownBlocks(obj.rawText || '');
+  // A note the user has resized wraps to the width they gave it; one they
+  // haven't sizes itself, up to the auto cap.
+  const authoredWidth = obj.maxWidth
+    ? Math.max(STICKY_MIN_WIDTH, Math.min(STICKY_RESIZE_MAX_WIDTH, obj.maxWidth))
+    : 0;
+  const maxContent = (authoredWidth || STICKY_MAX_WIDTH) - STICKY_PAD * 2;
+  const context = canvasContext;
+  const rows = [];
+  let y = 0;
+  let contentWidth = 0;
+  let taskCount = 0;
+  let taskDone = 0;
+
+  context.save();
+  blocks.forEach((block, blockIndex) => {
+    const style = stickyBlockStyle(block, base);
+    if (blockIndex > 0) y += style.spaceBefore;
+
+    if (block.kind === 'blank') { y += style.lineHeight; return; }
+    if (block.kind === 'rule') {
+      rows.push({ kind: 'rule', y: y + style.lineHeight / 2 });
+      y += style.lineHeight;
+      contentWidth = Math.max(contentWidth, 60);
+      return;
+    }
+
+    // The marker sits in the left gutter and the text hangs beside it, so a
+    // wrapped bullet lines up under its own first line rather than the bullet.
+    // A task reserves the same gutter for its checkbox.
+    let markerWidth = 0;
+    if (block.marker) {
+      context.font = `${style.size}px ${family}`;
+      markerWidth = context.measureText(block.marker + ' ').width;
+    } else if (block.kind === 'task') {
+      markerWidth = style.size * 1.32;
+    }
+    const textX = style.indent + markerWidth;
+    const available = Math.max(40, maxContent - textX);
+
+    // Break every chunk into words + the whitespace between them, keeping the
+    // owning chunk so each word is measured in its own style.
+    const words = [];
+    for (const chunk of block.chunks) {
+      for (const part of chunk.text.split(/(\s+)/)) {
+        if (part) words.push({ text: part, chunk, isSpace: /^\s+$/.test(part) });
+      }
+    }
+
+    // A ticked-off task is dimmed and struck through, so a list reads as
+    // progress at a glance rather than as a wall of equal lines.
+    const done = block.kind === 'task' && block.checked;
+    if (block.kind === 'task') {
+      taskCount++;
+      if (block.checked) taskDone++;
+    }
+
+    let pieces = [];
+    let lineWidth = 0;
+    let emitted = false;
+    const flushRow = () => {
+      rows.push({
+        kind: 'line',
+        y,
+        x: textX,
+        pieces,
+        marker: emitted ? null : (block.marker || null),
+        // The source line travels with the box so a click can rewrite it.
+        checkbox: (emitted || block.kind !== 'task') ? null
+          : { checked: !!block.checked, line: block.line },
+        markerX: style.indent,
+        quote: block.kind === 'quote',
+        muted: style.muted || done,
+        strike: done,
+        width: lineWidth,
+        style
+      });
+      contentWidth = Math.max(contentWidth, textX + lineWidth);
+      y += style.lineHeight;
+      emitted = true;
+      pieces = [];
+      lineWidth = 0;
+    };
+
+    for (const word of words) {
+      const font = stickyChunkFont(word.chunk, style, family);
+      context.font = font;
+      const width = context.measureText(word.text).width;
+
+      // A token wider than the whole column (a URL, a hash) can never fit on
+      // a row of its own, so it is broken between characters instead of being
+      // left to run off the pad.
+      if (!word.isSpace && width > available) {
+        let rest = word.text;
+        while (rest) {
+          let fit = 1;
+          while (fit < rest.length &&
+                 lineWidth + context.measureText(rest.slice(0, fit + 1)).width <= available) fit++;
+          const slice = rest.slice(0, fit);
+          const sliceWidth = context.measureText(slice).width;
+          if (pieces.length && lineWidth + sliceWidth > available) { flushRow(); continue; }
+          pieces.push({ text: slice, x: lineWidth, width: sliceWidth, font, code: word.chunk.code, link: word.chunk.link });
+          lineWidth += sliceWidth;
+          rest = rest.slice(fit);
+          if (rest) flushRow();
+        }
+        continue;
+      }
+
+      if (!word.isSpace && pieces.length && lineWidth + width > available) flushRow();
+      if (!pieces.length && word.isSpace) continue;   // no leading space after a wrap
+      pieces.push({ text: word.text, x: lineWidth, width, font, code: word.chunk.code, link: word.chunk.link });
+      lineWidth += width;
+    }
+    if (pieces.length || !emitted) flushRow();
+  });
+
+  // A checklist gets a progress meter of its own. One lonely task doesn't
+  // need a bar to explain itself, so it starts at two.
+  if (taskCount >= 2) {
+    y += base * 0.5;
+    rows.push({ kind: 'progress', y, done: taskDone, total: taskCount, size: base });
+    y += base * 0.85;
+    contentWidth = Math.max(contentWidth, 150);
+  }
+  context.restore();
+
+  const width = authoredWidth ||
+    Math.max(STICKY_MIN_WIDTH, Math.min(STICKY_MAX_WIDTH, Math.ceil(contentWidth) + STICKY_PAD * 2));
+  // The height the text actually needs — the floor a resize can never go below.
+  const contentHeight = Math.max(STICKY_MIN_HEIGHT, Math.ceil(y) + STICKY_PAD * 2 + STICKY_FOLD * 0.25);
+  const height = Math.max(contentHeight, obj.minHeight || 0);
+  return { width, height, contentHeight, rows };
+}
+
+// Layout is pure given (rawText, font), so it is cached on the object and
+// recomputed only when either changes. The cache is stripped before saving.
+function getStickyLayout(obj) {
+  const key = `${obj.font}|${obj.maxWidth || 0}|${obj.minHeight || 0}|${obj.rawText}`;
+  if (!obj._layout || obj._layoutKey !== key) {
+    obj._layout = layoutSticky(obj);
+    obj._layoutKey = key;
+  }
+  return obj._layout;
+}
+
+// Recompute the cached box size after the text, font or colour changed.
+function applyStickyMetrics(obj) {
+  obj._layout = null;
+  const layout = getStickyLayout(obj);
+  obj.width = layout.width;
+  obj.height = layout.height;
+}
+
+// Unlike text objects, which are measured again on every paint, a sticky
+// keeps the box it was measured into. The toolbar fonts arrive from the
+// network some time after the first paint, so a note laid out against the
+// fallback face has to be re-measured once the real one lands — otherwise it
+// wears a pad that no longer fits its own text.
+function refreshStickyLayouts() {
+  let found = false;
+  for (const obj of history) {
+    if (obj.type !== 'sticky') continue;
+    applyStickyMetrics(obj);
+    found = true;
+  }
+  if (found) fullRedraw();
+}
+
+if (document.fonts && document.fonts.addEventListener) {
+  document.fonts.addEventListener('loadingdone', refreshStickyLayouts);
+}
+
+// ── Rendering ────────────────────────────────────────────
+// The pad outline: a rectangle with the bottom-right corner cut away, so the
+// fold triangle drawn over the cut reads as a lifted corner.
+function stickyBodyPath(context, obj) {
+  const { x, y, width: w, height: h } = obj;
+  const fold = Math.min(STICKY_FOLD, w * 0.35, h * 0.35);
+  context.beginPath();
+  context.moveTo(x, y);
+  context.lineTo(x + w, y);
+  context.lineTo(x + w, y + h - fold);
+  context.lineTo(x + w - fold, y + h);
+  context.lineTo(x, y + h);
+  context.closePath();
+  return fold;
+}
+
+function drawSticky(context, obj) {
+  const layout = getStickyLayout(obj);
+  const ink = obj.color || stickyInk(obj.bgColor);
+  const linkColor = stickyLinkColor(obj.bgColor);
+  const family = stickyFontParts(obj).family;
+
+  // Pad + drop shadow. The shadow is cleared before any text is drawn,
+  // otherwise every glyph would get its own halo.
+  context.save();
+  context.shadowColor = 'rgba(0,0,0,0.28)';
+  context.shadowBlur = 14;
+  context.shadowOffsetY = 5;
+  const fold = stickyBodyPath(context, obj);
+  context.fillStyle = obj.bgColor;
+  context.fill();
+  context.restore();
+
+  context.save();
+  stickyBodyPath(context, obj);
+  context.fillStyle = obj.bgColor;
+  context.fill();
+  context.strokeStyle = shadeColor(obj.bgColor, -0.12);
+  context.lineWidth = 1;
+  context.stroke();
+
+  // The folded corner: a triangle in a darker shade of the pad.
+  context.beginPath();
+  context.moveTo(obj.x + obj.width - fold, obj.y + obj.height - fold);
+  context.lineTo(obj.x + obj.width, obj.y + obj.height - fold);
+  context.lineTo(obj.x + obj.width - fold, obj.y + obj.height);
+  context.closePath();
+  context.fillStyle = shadeColor(obj.bgColor, -0.16);
+  context.fill();
+  context.strokeStyle = shadeColor(obj.bgColor, -0.24);
+  context.stroke();
+
+  // Text. Everything below is clipped to the pad so a note that was resized
+  // by a font change can never bleed onto the drawing around it.
+  stickyBodyPath(context, obj);
+  context.clip();
+  context.textBaseline = 'top';
+
+  const originX = obj.x + STICKY_PAD;
+  const originY = obj.y + STICKY_PAD;
+  for (const row of layout.rows) {
+    if (row.kind === 'progress') {
+      drawStickyProgress(context, originX, originY + row.y,
+        obj.width - STICKY_PAD * 2, row, ink, family);
+      continue;
+    }
+    if (row.kind === 'rule') {
+      context.strokeStyle = withAlpha(ink, 0.22);
+      context.lineWidth = 1;
+      context.beginPath();
+      context.moveTo(originX, originY + row.y);
+      context.lineTo(obj.x + obj.width - STICKY_PAD, originY + row.y);
+      context.stroke();
+      continue;
+    }
+
+    const rowInk = row.muted ? withAlpha(ink, 0.62) : ink;
+
+    // Blockquote bar, drawn once per wrapped row so it runs the full quote.
+    if (row.quote) {
+      context.fillStyle = withAlpha(ink, 0.28);
+      context.fillRect(originX, originY + row.y, 2.5, row.style.lineHeight);
+    }
+
+    if (row.marker) {
+      context.font = `${row.style.size}px ${family}`;
+      context.fillStyle = withAlpha(ink, 0.7);
+      context.fillText(row.marker, originX + row.markerX, originY + row.y);
+    }
+
+    if (row.checkbox) {
+      // Hover is a live-cursor affordance, so it belongs on screen and not in
+      // an export: only the on-screen context ever gets it.
+      const hovered = context === canvasContext && stickyHoverTask &&
+        stickyHoverTask.obj === obj && stickyHoverTask.line === row.checkbox.line;
+      drawStickyCheckbox(context, originX + row.markerX, originY + row.y,
+        row.style.size, row.checkbox.checked, ink, obj.bgColor, hovered);
+    }
+
+    for (const piece of row.pieces) {
+      const px = originX + row.x + piece.x;
+      const py = originY + row.y;
+      if (piece.code) {
+        // Subtle pill behind inline code, in the pad's own darker shade.
+        context.fillStyle = withAlpha(ink, 0.09);
+        context.fillRect(px - 2, py - 1, piece.width + 4, row.style.lineHeight * 0.92);
+      }
+      context.font = piece.font;
+      if (piece.link && !row.muted) context.fillStyle = linkColor;
+      else if (piece.code) context.fillStyle = withAlpha(ink, 0.85);
+      else context.fillStyle = rowInk;
+      context.fillText(piece.text, px, py);
+
+      // Links are underlined as well as coloured: colour alone is not an
+      // affordance for anyone who cannot separate these two hues.
+      if (piece.link) {
+        context.fillRect(px, py + row.style.size * 1.16, piece.width, Math.max(1, row.style.size / 16));
+      }
+    }
+
+    // Strike a completed task through, across the whole row.
+    if (row.strike && row.width > 0) {
+      context.fillStyle = withAlpha(ink, 0.55);
+      context.fillRect(originX + row.x, originY + row.y + row.style.size * 0.62,
+        row.width, Math.max(1, row.style.size / 14));
+    }
+  }
+  context.restore();
+}
+
+// A checkbox in the list gutter: a rounded square, ticked when done, and
+// lifted on hover so it reads as something you can press.
+function drawStickyCheckbox(context, x, y, size, checked, ink, bgColor, hovered) {
+  const box = size * 0.82;
+  const top = y + size * 0.22;
+  const radius = box * 0.24;
+
+  const boxPath = () => {
+    context.beginPath();
+    if (context.roundRect) context.roundRect(x, top, box, box, radius);
+    else context.rect(x, top, box, box);   // older engines: square corners are fine
+  };
+
+  // Hover halo, drawn behind the box.
+  if (hovered) {
+    const pad = box * 0.34;
+    context.beginPath();
+    if (context.roundRect) {
+      context.roundRect(x - pad, top - pad, box + pad * 2, box + pad * 2, radius + pad * 0.7);
+    } else {
+      context.rect(x - pad, top - pad, box + pad * 2, box + pad * 2);
+    }
+    context.fillStyle = withAlpha(ink, 0.12);
+    context.fill();
+  }
+
+  boxPath();
+  if (checked) {
+    context.fillStyle = withAlpha(ink, hovered ? 0.86 : 0.76);
+    context.fill();
+  } else {
+    context.fillStyle = withAlpha(ink, hovered ? 0.1 : 0.04);
+    context.fill();
+    context.strokeStyle = withAlpha(ink, hovered ? 0.75 : 0.45);
+    context.lineWidth = Math.max(1, size / (hovered ? 11 : 14));
+    context.stroke();
+  }
+
+  if (checked) {
+    context.strokeStyle = bgColor;
+    context.lineWidth = Math.max(1.4, size / 8);
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.beginPath();
+    context.moveTo(x + box * 0.24, top + box * 0.52);
+    context.lineTo(x + box * 0.44, top + box * 0.72);
+    context.lineTo(x + box * 0.78, top + box * 0.28);
+    context.stroke();
+  }
+}
+
+// The checklist meter: a track, a fill, and a plain "3 / 5" to its right.
+function drawStickyProgress(context, x, y, width, row, ink, family) {
+  const size = row.size;
+  const label = `${row.done} / ${row.total}`;
+  context.font = `${size * 0.72}px ${family}`;
+  const labelWidth = context.measureText(label).width;
+  const trackWidth = Math.max(40, width - labelWidth - size * 0.6);
+  const height = Math.max(3, size * 0.26);
+  const radius = height / 2;
+  const ratio = row.total ? row.done / row.total : 0;
+
+  const track = (w) => {
+    context.beginPath();
+    if (context.roundRect) context.roundRect(x, y, w, height, radius);
+    else context.rect(x, y, w, height);
+    context.fill();
+  };
+
+  context.fillStyle = withAlpha(ink, 0.14);
+  track(trackWidth);
+  if (ratio > 0) {
+    context.fillStyle = withAlpha(ink, ratio === 1 ? 0.78 : 0.5);
+    track(Math.max(height, trackWidth * ratio));
+  }
+
+  context.fillStyle = withAlpha(ink, 0.62);
+  context.textBaseline = 'middle';
+  context.fillText(label, x + trackWidth + size * 0.6, y + height / 2);
+  context.textBaseline = 'top';
+}
+
+// ── Hit-testing ──────────────────────────────────────────
+// Topmost sticky under a point, or -1. Used by the double-click handler.
+function hitTestSticky(worldPoint) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const obj = history[i];
+    if (obj.type !== 'sticky') continue;
+    if (worldPoint.x >= obj.x && worldPoint.x <= obj.x + obj.width &&
+        worldPoint.y >= obj.y && worldPoint.y <= obj.y + obj.height) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The link under a point, or null. A note is opaque: a point inside one never
+// falls through to a link on a note below it.
+function stickyLinkAt(worldPoint) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const obj = history[i];
+    if (obj.type !== 'sticky') continue;
+    if (worldPoint.x < obj.x || worldPoint.x > obj.x + obj.width ||
+        worldPoint.y < obj.y || worldPoint.y > obj.y + obj.height) continue;
+
+    const localX = worldPoint.x - (obj.x + STICKY_PAD);
+    const localY = worldPoint.y - (obj.y + STICKY_PAD);
+    for (const row of getStickyLayout(obj).rows) {
+      if (row.kind !== 'line') continue;
+      if (localY < row.y || localY > row.y + row.style.lineHeight) continue;
+      for (const piece of row.pieces) {
+        if (!piece.link) continue;
+        const px = row.x + piece.x;
+        if (localX >= px && localX <= px + piece.width) return piece.link;
+      }
+    }
+    return null;
+  }
+  return null;
+}
+
+// ── Clickable task boxes ─────────────────────────────────
+// A checkbox on the canvas is a real control: clicking it rewrites the `[ ]`
+// on its own source line and nothing else, so the note's text stays the one
+// source of truth and the change undoes like any other edit.
+let stickyHoverTask = null;   // { obj, line } under the cursor, for the hover state
+
+// The task box under a point, or null.
+function stickyTaskAt(worldPoint) {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const obj = history[i];
+    if (obj.type !== 'sticky') continue;
+    if (worldPoint.x < obj.x || worldPoint.x > obj.x + obj.width ||
+        worldPoint.y < obj.y || worldPoint.y > obj.y + obj.height) continue;
+
+    const localX = worldPoint.x - (obj.x + STICKY_PAD);
+    const localY = worldPoint.y - (obj.y + STICKY_PAD);
+    for (const row of getStickyLayout(obj).rows) {
+      if (row.kind !== 'line' || !row.checkbox) continue;
+      const size = row.style.size;
+      const box = size * 0.82;
+      const slack = box * 0.35;   // a comfortable target, not a pixel hunt
+      const left = row.markerX - slack;
+      const top = row.y + size * 0.22 - slack;
+      if (localX >= left && localX <= left + box + slack * 2 &&
+          localY >= top && localY <= top + box + slack * 2) {
+        return { obj, line: row.checkbox.line, checked: row.checkbox.checked };
+      }
+    }
+    return null;   // inside this note, but not on a box
+  }
+  return null;
+}
+
+// Flip `- [ ]` to `- [x]` (and back) on one line of a note's source.
+function toggleStickyTask(obj, lineIndex) {
+  const lines = String(obj.rawText || '').split('\n');
+  const match = /^(\s*[-*+]\s+\[)([ xX])(\].*)$/.exec(lines[lineIndex] || '');
+  if (!match) return false;
+
+  const from = stickySnapshot(obj);
+  lines[lineIndex] = match[1] + (match[2] === ' ' ? 'x' : ' ') + match[3];
+  obj.rawText = lines.join('\n');
+  applyStickyMetrics(obj);
+  undoStack.push({ type: 'editSticky', obj, from, to: stickySnapshot(obj) });
+  redoStack = [];
+  syncUndoRedo();
+  return true;
+}
+
+// Only schemes a canvas note has any business opening.
+function openStickyLink(url) {
+  if (!/^(https?:|mailto:)/i.test(url)) {
+    flashStatus('Only http, https and mailto links can be opened');
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+  flashStatus('Opened ' + url);
+}
+
+// ── Resize handles ───────────────────────────────────────
+// Eight handles on the selection box. Width is authored by the drag; height
+// follows the text unless the drag asks for more room than the text needs.
+const STICKY_HANDLES = [
+  { id: 'nw', fx: 0,  fy: 0,  cursor: 'nwse-resize' },
+  { id: 'n',  fx: .5, fy: 0,  cursor: 'ns-resize' },
+  { id: 'ne', fx: 1,  fy: 0,  cursor: 'nesw-resize' },
+  { id: 'e',  fx: 1,  fy: .5, cursor: 'ew-resize' },
+  { id: 'se', fx: 1,  fy: 1,  cursor: 'nwse-resize' },
+  { id: 's',  fx: .5, fy: 1,  cursor: 'ns-resize' },
+  { id: 'sw', fx: 0,  fy: 1,  cursor: 'nesw-resize' },
+  { id: 'w',  fx: 0,  fy: .5, cursor: 'ew-resize' }
+];
+
+let stickyResize = null;   // { obj, handle, start, startWorld, from, changed }
+
+function stickyHandleAt(obj, worldPoint, screenTolerance) {
+  const tolerance = (screenTolerance || 8) / viewScale;   // constant in screen pixels at any zoom
+  for (const handle of STICKY_HANDLES) {
+    const hx = obj.x + obj.width * handle.fx;
+    const hy = obj.y + obj.height * handle.fy;
+    if (Math.abs(worldPoint.x - hx) <= tolerance && Math.abs(worldPoint.y - hy) <= tolerance) {
+      return handle;
+    }
+  }
+  return null;
+}
+
+function drawStickyHandles(context, obj) {
+  const size = 7 / viewScale;
+  context.fillStyle = isDark ? '#161616' : '#ffffff';
+  context.strokeStyle = isDark ? '#c8a96e' : '#8a6a2a';
+  context.lineWidth = 1.5 / viewScale;
+  for (const handle of STICKY_HANDLES) {
+    const hx = obj.x + obj.width * handle.fx - size / 2;
+    const hy = obj.y + obj.height * handle.fy - size / 2;
+    context.fillRect(hx, hy, size, size);
+    context.strokeRect(hx, hy, size, size);
+  }
+}
+
+function beginStickyResize(obj, handle, worldPoint) {
+  stickyResize = {
+    obj,
+    handle,
+    start: { x: obj.x, y: obj.y, width: obj.width, height: obj.height },
+    startWorld: { x: worldPoint.x, y: worldPoint.y },
+    from: stickySnapshot(obj),
+    changed: false
+  };
+  canvas.style.cursor = handle.cursor;
+}
+
+function updateStickyResize(worldPoint) {
+  const { obj, handle, start, startWorld } = stickyResize;
+  const dx = worldPoint.x - startWorld.x;
+  const dy = worldPoint.y - startWorld.y;
+  const west = handle.id.indexOf('w') !== -1;
+  const east = handle.id.indexOf('e') !== -1;
+  const north = handle.id.indexOf('n') !== -1;
+  const south = handle.id.indexOf('s') !== -1;
+
+  if (east || west) {
+    const wanted = east ? start.width + dx : start.width - dx;
+    obj.maxWidth = Math.max(STICKY_MIN_WIDTH, Math.min(STICKY_RESIZE_MAX_WIDTH, wanted));
+  }
+  if (north || south) {
+    obj.minHeight = Math.max(STICKY_MIN_HEIGHT, south ? start.height + dy : start.height - dy);
+  }
+
+  // Re-wrap, then pin the edges the user is not dragging. The height that
+  // comes back may be larger than asked for — the text sets the floor.
+  applyStickyMetrics(obj);
+  obj.x = west ? start.x + (start.width - obj.width) : start.x;
+  obj.y = north ? start.y + (start.height - obj.height) : start.y;
+  stickyResize.changed = true;
+}
+
+function endStickyResize() {
+  if (!stickyResize) return;
+  if (stickyResize.changed) {
+    undoStack.push({
+      type: 'editSticky',
+      obj: stickyResize.obj,
+      from: stickyResize.from,
+      to: stickySnapshot(stickyResize.obj)
+    });
+    redoStack = [];
+    syncUndoRedo();
+  }
+  stickyResize = null;
+  canvas.style.cursor = CURSORS[tool];
+  fullRedraw();
+}
+
+// ── Undo snapshots ───────────────────────────────────────
+// One shape covers both edits and resizes: a resize moves the note when the
+// drag is on a top or left handle, so position belongs in here too.
+function stickySnapshot(obj) {
+  return {
+    x: obj.x,
+    y: obj.y,
+    rawText: obj.rawText,
+    bgColor: obj.bgColor,
+    color: obj.color,
+    font: obj.font,
+    width: obj.width,
+    height: obj.height,
+    maxWidth: obj.maxWidth,
+    minHeight: obj.minHeight
+  };
+}
+
+function applyStickySnapshot(obj, snap) {
+  obj.x = snap.x;
+  obj.y = snap.y;
+  obj.rawText = snap.rawText;
+  obj.bgColor = snap.bgColor;
+  obj.color = snap.color;
+  obj.font = snap.font;
+  obj.width = snap.width;
+  obj.height = snap.height;
+  obj.maxWidth = snap.maxWidth;
+  obj.minHeight = snap.minHeight;
+  obj._layout = null;
+}
+
+// ── Editor overlay ───────────────────────────────────────
+const stickyOverlay = document.getElementById('sticky-overlay');
+const stickyEditor = document.getElementById('sticky-editor');
+const stickyTextarea = document.getElementById('sticky-text');
+const stickyHighlight = document.getElementById('sticky-highlight');
+const stickyField = document.getElementById('sticky-field');
+const stickySwatches = document.getElementById('sticky-swatches');
+const stickyFontFamilySelect = document.getElementById('sticky-font-family');
+const stickyFontSizeInput = document.getElementById('sticky-font-size');
+const stickyGroup = document.getElementById('bc-sticky');
+
+const STICKY_TEXTAREA_MAX_HEIGHT = 340;
+const STICKY_PLACEHOLDER = '# Heading\n- a point worth keeping\n- [ ] a thing to do\n- [x] a thing done\n\n**bold**, *italic*, `code`, [a link](https://example.com)';
+
+let stickyEditIndex = -1;     // history index being edited, -1 = new note
+let stickyOrigin = null;      // world top-left for a new note; null = viewport centre
+let stickyColor = STICKY_COLORS[0];
+let stickyFont = null;        // base CSS font captured when the editor opened
+
+// The button only makes sense with the Text tool, so it slides in and out with
+// it exactly like the smart-stroke pair does for Draw.
+function syncStickyButton() {
+  if (stickyGroup) stickyGroup.classList.toggle('collapsed', tool !== 'text');
+}
+
+// The markup ships collapsed (Draw is the default tool); this keeps the two
+// in step if that default ever changes.
+syncStickyButton();
+
+// Paint the editor chrome in the selected pad colour so the note you are
+// typing looks like the note you are about to get.
+function applyStickyEditorColor() {
+  const ink = stickyInk(stickyColor);
+  stickyEditor.style.setProperty('--sticky-bg', stickyColor);
+  stickyEditor.style.setProperty('--sticky-ink', ink);
+  stickyEditor.style.setProperty('--sticky-mark', withAlpha(ink, 0.42));
+  stickyEditor.style.setProperty('--sticky-accent', shadeColor(stickyColor, -0.55));
+  stickyEditor.style.setProperty('--sticky-edge', shadeColor(stickyColor, -0.14));
+  stickyEditor.style.setProperty('--sticky-code', withAlpha(ink, 0.1));
+  stickyEditor.style.setProperty('--sticky-link', stickyLinkColor(stickyColor));
+  Array.from(stickySwatches.children).forEach((el) => {
+    el.classList.toggle('on', el.dataset.color === stickyColor);
+  });
+}
+
+function setStickyColor(color) {
+  stickyColor = color;
+  applyStickyEditorColor();
+}
+
+// ── Note font ────────────────────────────────────────────
+// The editor is set in the face the note will use, so the choice is visible
+// while typing. Its size is clamped to what a modal can hold — the note itself
+// is drawn at the real value, however large.
+const STICKY_PREVIEW_MIN = 11;
+const STICKY_PREVIEW_MAX = 26;
+
+function isMonospaceFamily(family) {
+  return /monospace/i.test(family);
+}
+
+// Pull the font out of the editor controls and into stickyFont.
+// normalize=true writes the clamped size back to the input (on change, not on
+// every keystroke — clamping mid-typing fights the user).
+function updateStickyFont(normalize) {
+  // An out-of-range number is clamped; a blank or unparseable one falls back
+  // to the default rather than being clamped up to the minimum.
+  const parsed = parseInt(stickyFontSizeInput.value, 10);
+  const size = Number.isFinite(parsed) ? Math.max(8, Math.min(120, parsed)) : 18;
+  if (normalize) stickyFontSizeInput.value = size;
+  stickyFont = `${size}px ${stickyFontFamilySelect.value}`;
+  applyStickyEditorFont();
+  renderStickyHighlight();
+  autoResizeStickyTextarea();
+}
+
+// Point the editor controls at the font the note already carries.
+function syncStickyFontControls() {
+  const { size, family } = stickyFontParts({ font: stickyFont });
+  const known = Array.from(stickyFontFamilySelect.options).some((opt) => opt.value === family);
+  stickyFontFamilySelect.value = known ? family : stickyFontFamilySelect.options[0].value;
+  stickyFontSizeInput.value = Math.round(size);
+  stickyFont = `${Math.round(size)}px ${stickyFontFamilySelect.value}`;
+  applyStickyEditorFont();
+}
+
+function applyStickyEditorFont() {
+  const { size, family } = stickyFontParts({ font: stickyFont });
+  const preview = Math.max(STICKY_PREVIEW_MIN, Math.min(STICKY_PREVIEW_MAX, size));
+  stickyField.style.setProperty('--sticky-font', family);
+  stickyField.style.setProperty('--sticky-font-size', preview + 'px');
+  // Real bold and italic in the backdrop are only safe where the face
+  // guarantees a constant advance width. In a proportional face emphasis is
+  // shown in colour instead: colour cannot move a character, so it cannot
+  // move the caret away from the glyphs it belongs to.
+  stickyField.classList.toggle('mono', isMonospaceFamily(family));
+}
+
+// The pad colours, any colour the user has mixed since, and a + for the rest.
+function renderStickySwatches() {
+  stickySwatches.replaceChildren();
+
+  for (const color of STICKY_COLORS.concat(customColors)) {
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = 'sticky-swatch' + (color === stickyColor ? ' on' : '');
+    swatch.dataset.color = color;
+    swatch.style.background = color;
+    swatch.title = color;
+    swatch.setAttribute('aria-label', 'Pad colour ' + color);
+    swatch.addEventListener('click', () => setStickyColor(color));
+    stickySwatches.appendChild(swatch);
+  }
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'sticky-swatch sticky-swatch-add';
+  add.title = 'More colours';
+  add.setAttribute('aria-label', 'More pad colours');
+  add.textContent = '+';
+  add.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isColorPickerOpen()) { closeColorPicker(); return; }
+    openColorPicker(add, stickyColor, setStickyColor);
+  });
+  stickySwatches.appendChild(add);
+}
+
+renderStickySwatches();
+
+// ── Editor syntax highlighting ───────────────────────────
+// A backdrop div renders the same characters as the textarea, styled. The
+// textarea keeps its own glyphs transparent and only shows the caret, so the
+// two never disagree — which works because both are set in a monospace face
+// whose bold and italic keep the regular advance width. Markers are dimmed
+// rather than hidden, so every character still occupies its own cell and the
+// caret lands exactly where the backdrop says it should.
+function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function mark(text) {
+  return `<span class="md-mark">${text}</span>`;
+}
+
+function highlightMarkdownLine(rawLine) {
+  let line = escapeHtml(rawLine);
+
+  // Block markers first, anchored to the line start, before any span exists.
+  if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(rawLine)) return `<span class="md-rule">${line}</span>`;
+  line = line.replace(/^(\s*)(#{1,6}\s+)(.*)$/, (m, pad, hashes, rest) =>
+    `${pad}${mark(hashes)}<span class="md-heading">${rest}</span>`);
+  line = line.replace(/^(\s*)(&gt;\s?)/, (m, pad, quote) => `${pad}${mark(quote)}`);
+  // A task box is dimmed like any other marker, but a ticked one is tinted so
+  // the done lines are findable while scanning the source.
+  line = line.replace(/^(\s*)([-*+]\s)(\[[ xX]\]\s?)/, (m, pad, bullet, box) =>
+    `${pad}${mark(bullet)}<span class="${/[xX]/.test(box) ? 'md-done' : 'md-mark'}">${box}</span>`);
+  line = line.replace(/^(\s*)([-*+]\s)/, (m, pad, bullet) => `${pad}${mark(bullet)}`);
+  line = line.replace(/^(\s*)(\d{1,9}[.)]\s)/, (m, pad, number) => `${pad}${mark(number)}`);
+
+  // Links before emphasis, so a label can still carry **bold**; the target is
+  // dimmed like a marker because it is addressing, not prose.
+  line = line.replace(/\[([^\]\n]*)\]\(([^()\s]+)\)/g, (m, label, url) =>
+    `${mark('[')}<span class="md-link">${label}</span>${mark('](')}` +
+    `<span class="md-url">${url}</span>${mark(')')}`);
+  // Bare URLs only outside the markup just inserted — hence the lookbehind.
+  line = line.replace(/(?<![>\w"'=/])(https?:\/\/[^\s<>()[\]]+)/g, (m, url) =>
+    `<span class="md-link">${url}</span>`);
+
+  // Inline markers: the marker characters stay visible but dimmed, so the
+  // column count of the line is unchanged.
+  line = line.replace(/`([^`]+?)`/g, (m, body) => `${mark('`')}<code>${body}</code>${mark('`')}`);
+  line = line.replace(/\*\*\*(\S(?:.*?\S)??)\*\*\*/g, (m, body) => `${mark('***')}<b><i>${body}</i></b>${mark('***')}`);
+  line = line.replace(/\*\*(\S(?:.*?\S)??)\*\*/g, (m, body) => `${mark('**')}<b>${body}</b>${mark('**')}`);
+  line = line.replace(/\*(\S(?:.*?\S)??)\*/g, (m, body) => `${mark('*')}<i>${body}</i>${mark('*')}`);
+  return line;
+}
+
+function renderStickyHighlight() {
+  const value = stickyTextarea.value;
+  if (!value) {
+    stickyHighlight.innerHTML = `<span class="md-placeholder">${escapeHtml(STICKY_PLACEHOLDER)}</span>`;
+    return;
+  }
+  // The trailing newline keeps the backdrop as tall as the textarea when the
+  // text ends on a line break.
+  stickyHighlight.innerHTML = value.split('\n').map(highlightMarkdownLine).join('\n') + '\n';
+}
+
+function autoResizeStickyTextarea() {
+  stickyTextarea.style.height = 'auto';
+  const height = Math.min(STICKY_TEXTAREA_MAX_HEIGHT, Math.max(150, stickyTextarea.scrollHeight));
+  stickyTextarea.style.height = height + 'px';
+  stickyHighlight.style.height = height + 'px';
+}
+
+stickyTextarea.addEventListener('input', () => {
+  renderStickyHighlight();
+  autoResizeStickyTextarea();
+});
+
+// Keep the backdrop aligned once the text outgrows the box.
+stickyTextarea.addEventListener('scroll', () => {
+  stickyHighlight.scrollTop = stickyTextarea.scrollTop;
+  stickyHighlight.scrollLeft = stickyTextarea.scrollLeft;
+});
+
+// On the overlay rather than the textarea, so the shortcuts still work while
+// the font controls have focus.
+stickyOverlay.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); closeStickyEditor(); }
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitSticky(); }
+});
+
+// Clicking the dimmed backdrop discards, like Cancel — the pad itself keeps
+// the click, so a stray click inside the editor never loses the text.
+stickyOverlay.addEventListener('mousedown', (e) => {
+  if (e.target === stickyOverlay) closeStickyEditor();
+});
+
+// ── Open / close / commit ────────────────────────────────
+// index >= 0 edits that note; -1 creates a new one. origin is the world
+// top-left for a new note (a file drop); omit it to centre in the viewport.
+function openStickyEditor(index, origin) {
+  commitText();
+  hideTooltip();
+  closeExportMenu();
+
+  stickyOrigin = origin || null;
+  if (index >= 0 && history[index] && history[index].type === 'sticky') {
+    const obj = history[index];
+    stickyEditIndex = index;
+    stickyColor = obj.bgColor;
+    stickyFont = obj.font;
+    stickyTextarea.value = obj.rawText;
+  } else {
+    const style = getTextStyle();
+    stickyEditIndex = -1;
+    stickyFont = `${style.size}px ${style.family}`;
+    stickyTextarea.value = '';
+  }
+
+  applyStickyEditorColor();
+  syncStickyFontControls();
+  renderStickyHighlight();
+  stickyOverlay.classList.remove('hidden');
+  autoResizeStickyTextarea();
+  stickyTextarea.focus();
+  stickyTextarea.setSelectionRange(stickyTextarea.value.length, stickyTextarea.value.length);
+  fullRedraw();   // hide the note being edited while the overlay stands in for it
+}
+
+function closeStickyEditor() {
+  stickyOverlay.classList.add('hidden');
+  stickyEditIndex = -1;
+  stickyOrigin = null;
+  stickyTextarea.value = '';
+  fullRedraw();
+}
+
+// Build a sticky object from raw Markdown and place it on the canvas.
+// origin is the world top-left; omit it to centre the note in the viewport.
+function createSticky(rawText, origin, color) {
+  const style = getTextStyle();
+  const bgColor = color || stickyColor;
+  const obj = {
+    type: 'sticky',
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    rawText,
+    bgColor,
+    color: stickyInk(bgColor),
+    font: stickyFont || `${style.size}px ${style.family}`
+  };
+  applyStickyMetrics(obj);
+  if (origin) {
+    obj.x = origin.x;
+    obj.y = origin.y;
+  } else {
+    obj.x = (canvasWrap.offsetWidth / 2 - panX) / viewScale - obj.width / 2;
+    obj.y = (canvasWrap.offsetHeight / 2 - panY) / viewScale - obj.height / 2;
+  }
+  pushHistory(obj);
+  return obj;
+}
+
+function commitSticky() {
+  const rawText = stickyTextarea.value;
+  const editIndex = stickyEditIndex;
+  const origin = stickyOrigin;
+
+  if (!rawText.trim()) {
+    // An emptied note is a deleted note; a new empty one was never a note.
+    if (editIndex >= 0 && history[editIndex]) {
+      const obj = history[editIndex];
+      history.splice(editIndex, 1);
+      undoStack.push({ type: 'remove', obj });
+      redoStack = [];
+      syncUndoRedo();
+    }
+    closeStickyEditor();
+    return;
+  }
+
+  let committed;
+  if (editIndex >= 0 && history[editIndex] && history[editIndex].type === 'sticky') {
+    const obj = history[editIndex];
+    const from = stickySnapshot(obj);
+    obj.rawText = rawText;
+    obj.bgColor = stickyColor;
+    obj.color = stickyInk(stickyColor);
+    obj.font = stickyFont;
+    applyStickyMetrics(obj);
+    undoStack.push({ type: 'editSticky', obj, from, to: stickySnapshot(obj) });
+    redoStack = [];
+    syncUndoRedo();
+    committed = obj;
+  } else {
+    committed = createSticky(rawText, origin);
+  }
+
+  closeStickyEditor();
+
+  // Hand the finished note straight to the Select tool, already selected, so
+  // its resize handles are under the cursor: sizing the pad is what you want
+  // to do next, and it saves hunting for the note you just wrote.
+  setTool('select');
+  selectedIndex = history.indexOf(committed);
+  fullRedraw();
+}
+
+// ── Drag & drop a Markdown / text file ───────────────────
+// Dropping a file anywhere on the page would otherwise navigate away from the
+// canvas, so every drag event is cancelled — a .md or .txt lands as a note,
+// anything else is turned down with a message.
+const STICKY_DROP_LIMIT = 100000;   // characters; a runaway file can't hang the layout
+
+function isTextFile(file) {
+  return /\.(md|markdown|mdown|txt|text)$/i.test(file.name) ||
+         file.type === 'text/plain' || file.type === 'text/markdown';
+}
+
+function flashStatus(message) {
+  statusBar.textContent = message;
+  setTimeout(() => { statusBar.textContent = STATUSES[tool] || ''; }, 2600);
+}
+
+function setDropActive(active) {
+  document.body.classList.toggle('file-drag', active);
+}
+
+['dragenter', 'dragover'].forEach((type) => {
+  window.addEventListener(type, (e) => {
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setDropActive(true);
+  });
+});
+
+window.addEventListener('dragleave', (e) => {
+  // Only the drag actually leaving the window clears the highlight; moving
+  // between elements fires dragleave constantly.
+  if (e.relatedTarget === null) setDropActive(false);
+});
+
+window.addEventListener('drop', (e) => {
+  if (!e.dataTransfer) return;
+  e.preventDefault();
+  setDropActive(false);
+
+  const file = Array.from(e.dataTransfer.files || []).find(isTextFile);
+  if (!file) {
+    if (e.dataTransfer.files && e.dataTransfer.files.length) {
+      flashStatus('Only .md and .txt files can be dropped — paste images with Ctrl+V');
+    }
+    return;
+  }
+
+  const rect = canvasWrap.getBoundingClientRect();
+  const origin = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    let text = String(reader.result || '');
+    const truncated = text.length > STICKY_DROP_LIMIT;
+    if (truncated) text = text.slice(0, STICKY_DROP_LIMIT);
+    if (!text.trim()) { flashStatus('That file is empty'); return; }
+    createSticky(text, origin);
+    fullRedraw();
+    flashStatus(truncated
+      ? `${file.name} added (truncated to ${STICKY_DROP_LIMIT.toLocaleString()} characters)`
+      : `${file.name} added as a sticky note ✓`);
+  };
+  reader.onerror = () => flashStatus('Could not read that file');
+  reader.readAsText(file);
+});
+
 // ── Paste image ───────────────────────────────────────────
 document.addEventListener('paste', (e) => {
   const items = e.clipboardData?.items;
@@ -1284,6 +2618,15 @@ canvas.addEventListener('mousedown', (e) => {
   if (textInput.style.display === 'block' && tool !== 'text') commitText();
 
   if (tool === 'select') {
+    // A handle on the already-selected note wins over anything under it.
+    const selected = selectedIndex !== -1 ? history[selectedIndex] : null;
+    if (selected && selected.type === 'sticky') {
+      const handle = stickyHandleAt(selected, worldPoint);
+      if (handle) {
+        beginStickyResize(selected, handle, worldPoint);
+        return;
+      }
+    }
     const hit = hitTestAny(worldPoint);
     if (hit !== -1) {
       selectedIndex = hit;
@@ -1328,6 +2671,11 @@ canvas.addEventListener('mousemove', (e) => {
     fullRedraw();
     return;
   }
+  if (stickyResize) {
+    updateStickyResize(worldPoint);
+    fullRedraw();
+    return;
+  }
   if (dragMoveInfo) {
     const dx = worldPoint.x - dragMoveInfo.lastWorld.x;
     const dy = worldPoint.y - dragMoveInfo.lastWorld.y;
@@ -1336,6 +2684,29 @@ canvas.addEventListener('mousemove', (e) => {
     dragMoveInfo.lastWorld = { x: worldPoint.x, y: worldPoint.y };
     fullRedraw();
     return;
+  }
+  // Hover feedback with the select tool: resize handles take priority over
+  // task boxes and links, which take priority over the plain arrow.
+  if (tool === 'select') {
+    const selected = selectedIndex !== -1 ? history[selectedIndex] : null;
+    const handle = selected && selected.type === 'sticky' ? stickyHandleAt(selected, worldPoint) : null;
+    const task = handle ? null : stickyTaskAt(worldPoint);
+    canvas.style.cursor = handle ? handle.cursor
+      : ((task || stickyLinkAt(worldPoint)) ? 'pointer' : CURSORS[tool]);
+
+    // Repaint only when the hovered box actually changes.
+    const wasHovering = stickyHoverTask;
+    if (!task) stickyHoverTask = null;
+    else if (!wasHovering || wasHovering.obj !== task.obj || wasHovering.line !== task.line) {
+      stickyHoverTask = { obj: task.obj, line: task.line };
+    }
+    if ((wasHovering ? wasHovering.obj : null) !== (stickyHoverTask ? stickyHoverTask.obj : null) ||
+        (wasHovering ? wasHovering.line : -1) !== (stickyHoverTask ? stickyHoverTask.line : -1)) {
+      fullRedraw();
+    }
+  } else if (stickyHoverTask) {
+    stickyHoverTask = null;
+    fullRedraw();
   }
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) continueStroke(worldPoint);
   if (tool === 'eraser' && !isDrawing) {
@@ -1358,7 +2729,9 @@ canvas.addEventListener('mouseup', (e) => {
   if (e.button !== 0) return;
   const { sx, sy } = getPointerCoords(e);
   const worldPoint = toWorld(sx, sy);
-  if (isPanning) {
+  if (stickyResize) {
+    endStickyResize();
+  } else if (isPanning) {
     isPanning = false;
     canvas.style.cursor = CURSORS[tool];
   } else if (dragMoveInfo) {
@@ -1368,6 +2741,15 @@ canvas.addEventListener('mouseup', (e) => {
       undoStack.push({ type: 'move', obj, from: dragMoveInfo.startSnap, to: endSnap });
       redoStack = [];
       syncUndoRedo();
+    } else {
+      // A click that never moved: a task box takes it, otherwise a link.
+      const task = stickyTaskAt(worldPoint);
+      if (task) {
+        if (toggleStickyTask(task.obj, task.line)) fullRedraw();
+      } else {
+        const url = stickyLinkAt(worldPoint);
+        if (url) openStickyLink(url);
+      }
     }
     dragMoveInfo = null;
     canvas.style.cursor = CURSORS[tool];
@@ -1382,6 +2764,9 @@ canvas.addEventListener('mouseup', (e) => {
 canvas.addEventListener('mouseleave', (e) => {
   const { sx, sy } = getPointerCoords(e);
   const worldPoint = toWorld(sx, sy);
+  // Commit a resize that runs off the edge of the canvas
+  if (stickyResize) endStickyResize();
+  if (stickyHoverTask) { stickyHoverTask = null; fullRedraw(); }
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) endStroke(worldPoint);
   // Clear eraser hover preview
   if (tool === 'eraser' && !isDrawing) { eraserHoverPoint = null; fullRedraw(); }
@@ -1409,13 +2794,16 @@ canvasWrap.addEventListener('mousedown', (e) => {
   if (e.target !== textInput && activeTextNode && !justPlacedText) commitText();
 });
 
-// ── Double-click to edit text ──────────────────────────
+// ── Double-click to edit text / sticky notes ───────────
 canvas.addEventListener('dblclick', (e) => {
   e.preventDefault();
   const { sx, sy } = getPointerCoords(e);
   const worldPoint = toWorld(sx, sy);
 
-  const index = hitTestText(worldPoint);
+  // Whichever of the two sits higher in the stack wins the double-click.
+  const stickyIndex = hitTestSticky(worldPoint);
+  const textIndex = hitTestText(worldPoint);
+  const index = Math.max(stickyIndex, textIndex);
   if (index === -1) return;
 
   // Remove trivial click artifacts (dots, zero-size shapes) from the preceding clicks
@@ -1431,7 +2819,8 @@ canvas.addEventListener('dblclick', (e) => {
 
   shapeStart = null;
   shapeEnd = null;
-  editText(index);
+  if (index === stickyIndex) openStickyEditor(index);
+  else editText(index);
 });
 
 // ── Scroll zoom ───────────────────────────────────────────
@@ -1478,6 +2867,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'c') setTool('circle');
   if (e.key === 't') setTool('text');
   if (e.key === 'p') setTool('pan');
+
+  // Sticky notes are Text-tool only, mirroring their button in the bottom bar.
+  if (e.key === 'n' && tool === 'text') {
+    e.preventDefault();
+    bcFlashButton('btn-sticky-note');
+    openStickyEditor(-1);
+  }
 
   // Smart stroke modes are Draw-tool only; the shortcuts are inert elsewhere.
   if (e.key === 's' && tool === 'draw') {
@@ -1647,6 +3043,7 @@ function resetCanvas() {
   redoStack = [];
   selectedIndex = -1;
   dragMoveInfo = null;
+  stickyResize = null;
   shapeStart = null;
   shapeEnd = null;
   eraserUndoEntries = [];
@@ -1855,6 +3252,15 @@ canvas.addEventListener('touchstart', (e) => {
   const worldPoint = toWorld(sx, sy);
 
   if (tool === 'select') {
+    // Fingers are blunter than a mouse, so the handles get a wider target.
+    const selected = selectedIndex !== -1 ? history[selectedIndex] : null;
+    if (selected && selected.type === 'sticky') {
+      const handle = stickyHandleAt(selected, worldPoint, 18);
+      if (handle) {
+        beginStickyResize(selected, handle, worldPoint);
+        return;
+      }
+    }
     const hit = hitTestAny(worldPoint);
     if (hit !== -1) {
       selectedIndex = hit;
@@ -1899,6 +3305,11 @@ canvas.addEventListener('touchmove', (e) => {
   const touch = e.touches[0];
   const { sx, sy } = getPointerCoords(touch);
   const worldPoint = toWorld(sx, sy);
+  if (stickyResize) {
+    updateStickyResize(worldPoint);
+    fullRedraw();
+    return;
+  }
   if (dragMoveInfo) {
     const dx = worldPoint.x - dragMoveInfo.lastWorld.x;
     const dy = worldPoint.y - dragMoveInfo.lastWorld.y;
@@ -1918,13 +3329,23 @@ canvas.addEventListener('touchend', (e) => {
   const touch = e.changedTouches[0];
   const { sx, sy } = getPointerCoords(touch);
   const worldPoint = toWorld(sx, sy);
-  if (dragMoveInfo) {
+  if (stickyResize) {
+    endStickyResize();
+  } else if (dragMoveInfo) {
     if (dragMoveInfo.moved) {
       const obj = history[dragMoveInfo.index];
       const endSnap = snapshotPosition(obj);
       undoStack.push({ type: 'move', obj, from: dragMoveInfo.startSnap, to: endSnap });
       redoStack = [];
       syncUndoRedo();
+    } else {
+      const task = stickyTaskAt(worldPoint);
+      if (task) {
+        if (toggleStickyTask(task.obj, task.line)) fullRedraw();
+      } else {
+        const url = stickyLinkAt(worldPoint);
+        if (url) openStickyLink(url);
+      }
     }
     dragMoveInfo = null;
   } else if (tool === 'draw' || tool === 'eraser') {
@@ -2002,6 +3423,14 @@ function serializeObject(obj) {
     delete copy.img;
     return copy;
   }
+  if (obj.type === 'sticky') {
+    // The cached layout is derived from rawText + font; storing it would only
+    // bloat the record and risk restoring a stale one.
+    const copy = Object.assign({}, obj);
+    delete copy._layout;
+    delete copy._layoutKey;
+    return copy;
+  }
   return obj;
 }
 
@@ -2031,6 +3460,7 @@ function serializeState() {
     objects: history.map(serializeObject),
     view: { panX, panY, viewScale },
     theme: { isDark },
+    palette: { custom: customColors.slice() },
     meta: { canvasName, startTime: canvasStartTime.getTime() }
   };
 }
@@ -2041,7 +3471,9 @@ function deserializeState(state) {
   undoStack = [];
   redoStack = [];
   selectedIndex = -1;
+  stickyEditIndex = -1;
   dragMoveInfo = null;
+  stickyResize = null;
   shapeStart = null;
   shapeEnd = null;
 
@@ -2053,6 +3485,12 @@ function deserializeState(state) {
   if (state.theme && typeof state.theme.isDark === 'boolean') {
     isDark = state.theme.isDark;
     document.documentElement.classList.toggle('light', !isDark);
+  }
+  if (state.palette && Array.isArray(state.palette.custom)) {
+    // A document saved when the cap was higher keeps its most recent few.
+    customColors = state.palette.custom.slice(-MAX_CUSTOM_COLORS);
+    renderPalette();
+    renderStickySwatches();
   }
   if (state.meta) {
     canvasName = state.meta.canvasName || '';
@@ -2121,6 +3559,12 @@ function flushSave() {
   }
   syncUndoRedo();
   fullRedraw();
+
+  // Restored notes were measured in an earlier session, possibly before its
+  // web fonts had loaded; re-measure them once this session's fonts are in.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(refreshStickyLayouts).catch(() => {});
+  }
 
   // Persist on tab close / page hide so the latest state is always saved
   window.addEventListener('beforeunload', flushSave);

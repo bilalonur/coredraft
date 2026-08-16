@@ -140,7 +140,7 @@
     </button>
     <!-- Draw-tool only: slides in and out with the tool, as one group so the
          separator never strands itself next to another one. -->
-    <div class="bc-smart" id="bc-smart">
+    <div class="bc-swap bc-smart" id="bc-smart">
       <div class="bc-separator"></div>
       <!-- Shape snap: a closed outline pinned to its anchor points -->
       <button id="btn-smart-stroke" class="ctrl-btn" onclick="toggleSmartStroke()"
@@ -169,10 +169,76 @@
         </svg>
       </button>
     </div>
+    <!-- Text-tool only: opens the Markdown sticky-note editor. Ships
+         collapsed because Draw is the default tool. -->
+    <div class="bc-swap bc-sticky collapsed" id="bc-sticky">
+      <div class="bc-separator"></div>
+      <button id="btn-sticky-note" class="ctrl-btn" onclick="openStickyEditor(-1)"
+              aria-label="New sticky note"
+              data-tip-title="Sticky Note" data-tip-key="N"
+              data-tip-body="A coloured pad that renders Markdown on the canvas: headings, lists, quotes, bold, italic and code. Double-click one to edit it, or drop a .md file anywhere.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16v10.5L14.5 20H4z"/>
+          <path d="M20 14.5h-5.5V20"/>
+          <line x1="7.5" y1="8.5" x2="16.5" y2="8.5"/>
+          <line x1="7.5" y1="12" x2="12.5" y2="12"/>
+        </svg>
+      </button>
+    </div>
     <div class="bc-separator"></div>
     <button id="theme-toggle" onclick="toggleTheme()" title="Dark/Light">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.33 5.33 0 0 1-5.3-5.3 5.39 5.39 0 0 1 2.26-4.4C13 3.04 12.54 3 12 3z"/></svg>
     </button>
+  </div>
+</div>
+
+<!-- Markdown sticky-note editor. Hidden until the sticky button, the N key,
+     or a double-click on an existing note opens it. The backdrop div is a
+     styled mirror of the textarea sitting directly behind it; see
+     renderStickyHighlight() in app.js. -->
+<div id="sticky-overlay" class="hidden">
+  <div id="sticky-editor" role="dialog" aria-modal="true" aria-label="Markdown sticky note">
+    <div class="sticky-head">
+      <span class="sticky-title">Sticky note</span>
+      <select id="sticky-font-family" class="sticky-select" aria-label="Note font"
+              onchange="updateStickyFont()">
+        <option value="'Courier New',monospace">Mono</option>
+        <option value="Arial,sans-serif">Arial</option>
+        <option value="'Inter',sans-serif">Inter</option>
+        <option value="'Balsamiq Sans',cursive">Balsamiq</option>
+        <option value="'Merriweather',serif">Merriweather</option>
+        <option value="'Fira Code',monospace">Fira Code</option>
+        <option value="'Poppins',sans-serif">Poppins</option>
+      </select>
+      <input type="number" id="sticky-font-size" class="sticky-size" min="8" max="120"
+             aria-label="Note font size" onchange="updateStickyFont()" oninput="updateStickyFont()">
+      <div class="sticky-swatches" id="sticky-swatches"></div>
+      <button type="button" class="sticky-button" onclick="closeStickyEditor()">Cancel</button>
+      <button type="button" class="sticky-button primary" onclick="commitSticky()">OK</button>
+    </div>
+    <div class="sticky-field" id="sticky-field">
+      <div id="sticky-highlight" aria-hidden="true"></div>
+      <textarea id="sticky-text" spellcheck="false" autocomplete="off"
+                aria-label="Markdown source"></textarea>
+    </div>
+    <div class="sticky-foot">
+      <span class="sticky-syntax"># heading · - list · - [ ] task · [link](url) · &gt; quote · **bold** · *italic* · `code`</span>
+      <span class="sticky-keys">Esc cancel · Ctrl+Enter save</span>
+    </div>
+  </div>
+</div>
+
+<!-- Shared colour picker. One popover serves both the toolbar palette and the
+     sticky-note editor; openColorPicker() in app.js points it at whichever
+     control opened it. -->
+<div id="color-popover" class="hidden" role="dialog" aria-label="Choose a colour">
+  <div class="cp-grid" id="cp-grid"></div>
+  <div class="cp-foot">
+    <label class="cp-custom">
+      <input type="color" id="cp-custom" aria-label="Custom colour">
+      <span>Custom…</span>
+    </label>
+    <span class="cp-hex" id="cp-hex"></span>
   </div>
 </div>
 
@@ -182,6 +248,7 @@
 <div id="tooltip" role="tooltip" aria-hidden="true"></div>
 
 <script src="geometry.js"></script>
+<script src="markdown.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -139,6 +139,98 @@ html, body {
 
 .color-dot.on { border-color: var(--text); }
 
+/* The + that opens the full picker. Same footprint as a dot, drawn as an
+ * outline so it reads as an action rather than as another colour. */
+.color-add {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px dashed var(--muted);
+  background: transparent;
+  color: var(--muted);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform .1s, color .12s, border-color .12s;
+}
+
+.color-add:hover {
+  transform: scale(1.18);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Colour picker popover ───────────────────────────── */
+
+#color-popover {
+  position: fixed;
+  z-index: 500;              /* above the sticky editor, which opens it too */
+  padding: 10px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 9px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+}
+
+.cp-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 18px);
+  gap: 5px;
+}
+
+.cp-cell {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px rgba(128, 128, 128, 0.35);
+  cursor: pointer;
+  transition: transform .08s;
+}
+
+.cp-cell:hover { transform: scale(1.22); }
+
+.cp-cell.on { border-color: var(--text); }
+
+.cp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--toolbar-border);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cp-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.cp-custom input[type="color"] {
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.cp-hex { text-transform: uppercase; }
+
 /* ── Brush size slider ───────────────────────────────── */
 
 #brush-size {
@@ -502,7 +594,7 @@ html, body {
  * for collapsing (snappy retreat so it gets out of the way quickly).
  */
 .bc-secondary {
-  max-width: 260px; /* fits undo/redo + both smart-stroke toggles + theme */
+  max-width: 330px; /* fits undo/redo + smart-stroke pair + sticky + theme */
   opacity: 1;
   transition: max-width .25s cubic-bezier(.4, 0, .2, 1),
               opacity .2s ease-in .05s; /* slight delay on fade-in */
@@ -543,16 +635,17 @@ html, body {
   animation: bc-keyflash .6s ease-out;
 }
 
-/* ── Smart stroke toggles ────────────────────────────── */
+/* ── Tool-bound button groups ────────────────────────── */
 
 /*
- * Only meaningful for the Draw tool, so the whole group slides away for every
- * other tool rather than blinking out: the width collapses (which slides the
- * theme button across to meet it) while the buttons fade and shrink in place.
- * Grouping the leading separator in here keeps it from stranding itself next
+ * Some controls only mean something for one tool — the smart-stroke pair for
+ * Draw, the sticky-note button for Text. Rather than blinking out, the whole
+ * group slides away: the width collapses (which slides the theme button across
+ * to meet it) while the buttons fade and shrink in place. Grouping each
+ * leading separator inside its own group keeps it from stranding itself next
  * to the theme separator once the buttons are gone.
  */
-.bc-smart {
+.bc-swap {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -562,7 +655,7 @@ html, body {
               margin .26s cubic-bezier(.4, 0, .2, 1);
 }
 
-.bc-smart.collapsed {
+.bc-swap.collapsed {
   max-width: 0;
   margin: 0 -2px;        /* swallow the flex gaps left behind at zero width */
   pointer-events: none;  /* collapsed area must not intercept canvas clicks */
@@ -571,7 +664,7 @@ html, body {
 /* Scoped under #bottom-controls so these beat the shared `#bottom-controls
  * button` transition above, which would otherwise drop opacity from the list
  * and make the buttons blink out instead of fading. */
-#bottom-controls .bc-smart .ctrl-btn {
+#bottom-controls .bc-swap .ctrl-btn {
   opacity: 1;
   transform: scale(1);
   transition: opacity .18s ease .04s,
@@ -579,7 +672,7 @@ html, body {
               background .12s, box-shadow .25s;
 }
 
-#bottom-controls .bc-smart.collapsed .ctrl-btn {
+#bottom-controls .bc-swap.collapsed .ctrl-btn {
   opacity: 0;
   transform: scale(.72);
   transition-delay: 0s; /* no stagger on the way out — get clear quickly */
@@ -592,7 +685,7 @@ html, body {
 
 /* Restore the press-down nudge these buttons would otherwise lose to the
  * transform above (which outranks `#bottom-controls button:active`). */
-#bottom-controls .bc-smart .ctrl-btn:active {
+#bottom-controls .bc-swap .ctrl-btn:active {
   transform: scale(.92);
 }
 
@@ -664,6 +757,311 @@ html, body {
   color: var(--accent);
   font-size: 10px;
   white-space: nowrap;
+}
+
+/* ── Markdown sticky-note editor ─────────────────────── */
+
+/*
+ * The editor wears the pad colour it is about to commit, so what you type
+ * already looks like the note you will get. Every colour below comes from a
+ * custom property set by applyStickyEditorColor() in app.js.
+ */
+#sticky-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: sticky-fade .14s ease-out;
+}
+
+@keyframes sticky-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+#sticky-editor {
+  --sticky-bg: #f5df8f;
+  --sticky-ink: #2b2723;
+  --sticky-mark: rgba(43, 39, 35, 0.42);
+  --sticky-accent: #6b5a1f;
+  --sticky-edge: #d8c47c;
+  --sticky-code: rgba(43, 39, 35, 0.1);
+  --sticky-link: #17518f;
+
+  width: min(720px, 100%);
+  background: var(--sticky-bg);
+  color: var(--sticky-ink);
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  /* The same dog-ear the note gets on the canvas. */
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 26px), calc(100% - 26px) 100%, 0 100%);
+  animation: sticky-rise .16s cubic-bezier(.34, 1.3, .64, 1);
+  overflow: hidden;
+}
+
+@keyframes sticky-rise {
+  from { transform: translateY(10px) scale(.985); }
+  to   { transform: none; }
+}
+
+/*
+ * One row, always. The swatch strip is the only flexible item: as colours are
+ * added it takes the slack and then scrolls inside itself, so OK and Cancel
+ * never get pushed onto a second line.
+ */
+.sticky-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.045);
+  border-bottom: 1px solid var(--sticky-edge);
+}
+
+/* Font controls: the toolbar's set, restyled onto the pad colour. */
+.sticky-select,
+.sticky-size {
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--sticky-edge);
+  color: var(--sticky-ink);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.sticky-select { cursor: pointer; }
+
+.sticky-select:focus,
+.sticky-size:focus { border-color: var(--sticky-ink); }
+
+.sticky-size {
+  width: 50px;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+
+.sticky-size::-webkit-inner-spin-button,
+.sticky-size::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sticky-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  opacity: .62;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sticky-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding-right: 4px;
+  /* Takes the slack, and scrolls rather than growing the row */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sticky-swatches::-webkit-scrollbar { display: none; }
+
+/* On a narrow window the label is the first thing to go — it is the only item
+ * in the row that isn't a control. */
+@media (max-width: 620px) {
+  .sticky-title { display: none; }
+}
+
+.sticky-button,
+.sticky-swatches + .sticky-button { flex-shrink: 0; }
+
+.sticky-swatch {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: transform .1s;
+}
+
+.sticky-swatch:hover { transform: scale(1.18); }
+
+.sticky-swatch.on { border-color: var(--sticky-ink); }
+
+.sticky-swatch-add {
+  background: transparent;
+  border: 1px dashed var(--sticky-ink);
+  color: var(--sticky-ink);
+  opacity: .7;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sticky-swatch-add:hover { opacity: 1; }
+
+.sticky-button {
+  background: transparent;
+  border: 1px solid var(--sticky-edge);
+  color: var(--sticky-ink);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+
+.sticky-button:hover { background: rgba(0, 0, 0, 0.07); }
+
+.sticky-button.primary {
+  background: var(--sticky-ink);
+  border-color: var(--sticky-ink);
+  color: var(--sticky-bg);
+  font-weight: 700;
+}
+
+.sticky-button.primary:hover { opacity: .86; }
+
+/*
+ * The backdrop and the textarea must agree on every metric that moves a
+ * character: same face, size, line height, wrapping and padding. They are set
+ * in a monospace face, whose bold and italic keep the regular advance width —
+ * that is what lets the backdrop render real emphasis without the caret, which
+ * the textarea still owns, drifting out of position.
+ */
+.sticky-field {
+  position: relative;
+  margin: 0;
+}
+
+#sticky-highlight,
+#sticky-text {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 14px 16px;
+  border: none;
+  /* Both layers read the same two variables, set by applyStickyEditorFont(),
+   * so the backdrop can never disagree with the textarea about a metric. */
+  font-family: var(--sticky-font, 'Fira Code', 'Courier New', monospace);
+  font-size: var(--sticky-font-size, 13.5px);
+  line-height: 1.62;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  box-sizing: border-box;
+}
+
+#sticky-highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--sticky-ink);
+}
+
+#sticky-text {
+  position: relative;
+  min-height: 150px;
+  user-select: text;            /* body sets none, which would block selection here */
+  background: transparent;
+  color: transparent;           /* the backdrop draws the glyphs */
+  caret-color: var(--sticky-accent);
+  resize: none;
+  outline: none;
+  overflow-y: auto;
+}
+
+#sticky-text::selection {
+  background: rgba(0, 0, 0, 0.16);
+}
+
+/* Syntax colours for the backdrop. Colour never moves a character, so these
+ * are safe in any face; see below for the ones that change advance width. */
+#sticky-highlight .md-mark { color: var(--sticky-mark); }
+#sticky-highlight .md-done { color: var(--sticky-accent); }
+#sticky-highlight .md-link { color: var(--sticky-link); text-decoration: underline; }
+#sticky-highlight .md-url { color: var(--sticky-mark); }
+#sticky-highlight .md-heading { color: var(--sticky-accent); }
+#sticky-highlight .md-rule { color: var(--sticky-mark); }
+
+/*
+ * Emphasis is colour-only by default — and that means overriding the browser's
+ * own bold/italic on <b> and <i>, which would otherwise change advance widths
+ * and push the backdrop's characters out of line with the textarea's, and so
+ * out of line with the caret the textarea still owns.
+ */
+#sticky-highlight b { font-weight: inherit; color: var(--sticky-accent); }
+#sticky-highlight i { font-style: inherit; color: var(--sticky-accent); }
+
+/* Real weight and slant only in a monospace face, where bold and italic keep
+ * the regular advance width and so cannot move anything. */
+.sticky-field.mono #sticky-highlight b { font-weight: 700; color: inherit; }
+.sticky-field.mono #sticky-highlight i { font-style: italic; color: inherit; }
+.sticky-field.mono #sticky-highlight .md-heading { font-weight: 700; }
+#sticky-highlight code {
+  font: inherit;
+  background: var(--sticky-code);
+  border-radius: 3px;
+}
+#sticky-highlight .md-placeholder { color: var(--sticky-mark); }
+
+.sticky-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 34px 11px 16px;   /* right padding clears the folded corner */
+  border-top: 1px solid var(--sticky-edge);
+  background: rgba(0, 0, 0, 0.045);
+  font-family: 'Courier New', monospace;
+  font-size: 10.5px;
+  color: var(--sticky-ink);
+  opacity: .72;
+}
+
+.sticky-syntax,
+.sticky-keys {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sticky-keys { flex-shrink: 0; }
+
+/* Dropping a .md / .txt file anywhere on the page lands a note on the canvas;
+ * the outline says the canvas is ready to take it. */
+body.file-drag #canvas-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  pointer-events: none;
 }
 
 /* ── Utilities ───────────────────────────────────────── */
