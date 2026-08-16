@@ -138,12 +138,48 @@
         <path d="M21 7v6h-6"/><path d="M21 13C19 7.5 14 4 8.5 4A9 9 0 0 0 3 19.5"/>
       </svg>
     </button>
+    <!-- Draw-tool only: slides in and out with the tool, as one group so the
+         separator never strands itself next to another one. -->
+    <div class="bc-smart" id="bc-smart">
+      <div class="bc-separator"></div>
+      <!-- Shape snap: a closed outline pinned to its anchor points -->
+      <button id="btn-smart-stroke" class="ctrl-btn" onclick="toggleSmartStroke()"
+              aria-label="Smart Stroke"
+              data-tip-title="Smart Stroke" data-tip-key="S"
+              data-tip-body="Snaps a closed stroke to a perfect circle, rectangle or triangle. Anything else is smoothed to take out hand jitter.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="7"/>
+          <rect x="10.55" y="3.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="17.55" y="10.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="10.55" y="17.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="3.55" y="10.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <!-- Precision: an open path whose every segment is exact -->
+      <button id="btn-smart-stroke-2" class="ctrl-btn" onclick="toggleSmartStroke2()"
+              aria-label="Smart Stroke 2"
+              data-tip-title="Smart Stroke 2" data-tip-key="Shift+S"
+              data-tip-body="Rebuilds any stroke from exact pieces: straight runs become true lines, curves become true arcs, corners stay sharp. Built for letters and diagrams.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4,18 10,8 15,14 20,5"/>
+          <rect x="2.55" y="16.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="8.55" y="6.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="13.55" y="12.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="18.55" y="3.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+    </div>
     <div class="bc-separator"></div>
     <button id="theme-toggle" onclick="toggleTheme()" title="Dark/Light">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.33 5.33 0 0 1-5.3-5.3 5.39 5.39 0 0 1 2.26-4.4C13 3.04 12.54 3 12 3z"/></svg>
     </button>
   </div>
 </div>
+
+<!-- Shared hover tooltip. Lives outside #bottom-controls, which clips its
+     overflow for the slide animations, and is positioned with fixed
+     coordinates so it can sit above the bar without being cut off. -->
+<div id="tooltip" role="tooltip" aria-hidden="true"></div>
 
 <script src="geometry.js"></script>
 <script src="app.js"></script>

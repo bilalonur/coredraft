@@ -502,7 +502,7 @@ html, body {
  * for collapsing (snappy retreat so it gets out of the way quickly).
  */
 .bc-secondary {
-  max-width: 200px;
+  max-width: 260px; /* fits undo/redo + both smart-stroke toggles + theme */
   opacity: 1;
   transition: max-width .25s cubic-bezier(.4, 0, .2, 1),
               opacity .2s ease-in .05s; /* slight delay on fade-in */
@@ -541,4 +541,135 @@ html, body {
 
 #bottom-controls button.keyflash {
   animation: bc-keyflash .6s ease-out;
+}
+
+/* ── Smart stroke toggles ────────────────────────────── */
+
+/*
+ * Only meaningful for the Draw tool, so the whole group slides away for every
+ * other tool rather than blinking out: the width collapses (which slides the
+ * theme button across to meet it) while the buttons fade and shrink in place.
+ * Grouping the leading separator in here keeps it from stranding itself next
+ * to the theme separator once the buttons are gone.
+ */
+.bc-smart {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  max-width: 100px;
+  transition: max-width .26s cubic-bezier(.4, 0, .2, 1),
+              margin .26s cubic-bezier(.4, 0, .2, 1);
+}
+
+.bc-smart.collapsed {
+  max-width: 0;
+  margin: 0 -2px;        /* swallow the flex gaps left behind at zero width */
+  pointer-events: none;  /* collapsed area must not intercept canvas clicks */
+}
+
+/* Scoped under #bottom-controls so these beat the shared `#bottom-controls
+ * button` transition above, which would otherwise drop opacity from the list
+ * and make the buttons blink out instead of fading. */
+#bottom-controls .bc-smart .ctrl-btn {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity .18s ease .04s,
+              transform .22s cubic-bezier(.34, 1.4, .64, 1) .04s,
+              background .12s, box-shadow .25s;
+}
+
+#bottom-controls .bc-smart.collapsed .ctrl-btn {
+  opacity: 0;
+  transform: scale(.72);
+  transition-delay: 0s; /* no stagger on the way out — get clear quickly */
+}
+
+/* Stagger the second button slightly on the way in, so they arrive in order */
+#bottom-controls .bc-smart:not(.collapsed) #btn-smart-stroke-2 {
+  transition-delay: .09s;
+}
+
+/* Restore the press-down nudge these buttons would otherwise lose to the
+ * transform above (which outranks `#bottom-controls button:active`). */
+#bottom-controls .bc-smart .ctrl-btn:active {
+  transform: scale(.92);
+}
+
+#bottom-controls button.is-active {
+  background: rgba(200, 169, 110, 0.18);
+  box-shadow: inset 0 0 0 2px rgba(200, 169, 110, 0.75);
+}
+
+#bottom-controls button.is-active:hover {
+  background: rgba(200, 169, 110, 0.28);
+}
+
+/* ── Hover tooltip ───────────────────────────────────── */
+
+/*
+ * One shared bubble, moved and filled by app.js for any element carrying
+ * data-tip-title. It sits at the top level of the document because
+ * #bottom-controls clips its own overflow for the slide animations, which
+ * would otherwise cut a tooltip off the moment it rose above the bar.
+ */
+#tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 200;
+  max-width: 250px;
+  padding: 8px 10px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 7px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  color: var(--muted);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;   /* never steals the hover that opened it */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity .14s ease, transform .14s ease, visibility 0s linear .14s;
+}
+
+#tooltip.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: opacity .14s ease, transform .14s ease, visibility 0s;
+}
+
+#tooltip .tip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+#tooltip .tip-title {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 11.5px;
+}
+
+/* Little keycap for the shortcut */
+#tooltip .tip-key {
+  padding: 1px 5px;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 4px;
+  background: var(--button-hover);
+  color: var(--accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* ── Utilities ───────────────────────────────────────── */
+
+/* Hard hide. The smart-stroke pair deliberately does *not* use this — it
+ * collapses instead (see .bc-smart), because display:none cannot animate. */
+.hidden {
+  display: none !important;
 }

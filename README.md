@@ -18,6 +18,13 @@ A minimal, distraction-free drawing canvas for quick sketches, diagrams, and min
 - **Geometric eraser** — erases the exact geometry under the cursor instead of painting over it, so partly
   erased strokes and shapes keep their gaps when you move them later
 - **Velocity-sensitive pen** — strokes taper as you draw faster
+- **Smart stroke refinement** — two opt-in Draw-tool modes that clean up each stroke as you lift the pen.
+  Both leave you with an ordinary stroke, so it still erases and moves like one:
+  - **Smart Stroke** (`S`) — snaps a closed stroke to a perfect circle, rectangle or triangle, and smooths
+    everything else to remove hand jitter
+  - **Smart Stroke 2** (`Shift+S`) — rebuilds any stroke, open or closed, out of exact pieces: straight runs
+    become dead-straight lines (pulled onto a 45° step when they are already within 7° of one), curved runs
+    become true arcs, and corners stay sharp. Built for letterforms and everyday boxes and arrows
 - **Rich text** — 7 fonts, adjustable size, bold / italic; double-click any text to edit it in place
 - **Infinite canvas** — pan and zoom freely (4%–1000%), with pinch-zoom and touch drawing on tablets
 - **Dark / Light mode**
@@ -43,6 +50,7 @@ node tests/geometry.test.js
 |---|---|
 | `V` / `D` / `E` / `T` / `P` | Select / Draw / Eraser / Text / Pan |
 | `A` / `L` / `R` / `C` | Arrow / Line / Rectangle / Circle |
+| `S` / `Shift+S` (draw tool) | Toggle Smart Stroke / Smart Stroke 2 (one at a time) |
 | `Space` + drag, or middle-mouse drag | Pan canvas |
 | Scroll, or pinch | Zoom in/out |
 | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / Redo |

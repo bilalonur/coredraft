@@ -747,6 +747,11 @@ let activeTextNode = null;
 let selectedIndex = -1;    // index in history of the selected object, -1 = none
 let dragMoveInfo = null;   // { index, lastWorld, startSnap } — active move in select tool
 let eraserUndoEntries = []; // accumulates undo entries during a live eraser drag
+// Draw-tool stroke refinement, applied on release. The two modes are
+// mutually exclusive: both rewrite the stroke, so running them together
+// would just mean one re-fitting what the other already idealised.
+let isSmartDrawEnabled = false;  // snap closed strokes to circle / rectangle / triangle
+let isSmartDraw2Enabled = false; // rebuild every stroke from exact lines and arcs
 
 const SHAPE_TOOLS = new Set(['arrow', 'line', 'rect', 'circle']);
 const CURSORS = {
@@ -784,7 +789,110 @@ function setTool(t) {
   });
   canvas.style.cursor = CURSORS[t] || 'crosshair';
   statusBar.textContent = STATUSES[t] || '';
+  syncSmartStrokeButtons();
   fullRedraw();
+}
+
+// ── Hover tooltip ─────────────────────────────────────────
+// One bubble shared by every control carrying data-tip-title. Native title=
+// tooltips take a second to appear, can't be themed, and can't hold a
+// two-line explanation — and anything rendered inside #bottom-controls would
+// be clipped by the overflow that makes its slide animations work.
+const tooltip = document.getElementById('tooltip');
+let tooltipTarget = null;
+
+function hideTooltip() {
+  if (!tooltip) return;
+  tooltipTarget = null;
+  tooltip.classList.remove('show');
+  tooltip.setAttribute('aria-hidden', 'true');
+}
+
+function showTooltip(el) {
+  if (!tooltip) return;
+  tooltipTarget = el;
+
+  const head = document.createElement('div');
+  head.className = 'tip-head';
+  const title = document.createElement('span');
+  title.className = 'tip-title';
+  title.textContent = el.dataset.tipTitle;
+  head.appendChild(title);
+  if (el.dataset.tipKey) {
+    const key = document.createElement('span');
+    key.className = 'tip-key';
+    key.textContent = el.dataset.tipKey;
+    head.appendChild(key);
+  }
+  const body = document.createElement('div');
+  body.textContent = el.dataset.tipBody || '';
+  tooltip.replaceChildren(head, body);
+  tooltip.setAttribute('aria-hidden', 'false');
+
+  // Fill first, then measure: the bubble wraps, so its height isn't known
+  // until the text is in. Sit above the control, clamped to the viewport.
+  const anchor = el.getBoundingClientRect();
+  const box = tooltip.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.max(margin, Math.min(
+    anchor.left + anchor.width / 2 - box.width / 2,
+    window.innerWidth - box.width - margin
+  ));
+  let top = anchor.top - box.height - 10;
+  if (top < margin) top = anchor.bottom + 10; // no room above — flip below
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+  tooltip.classList.add('show');
+}
+
+document.querySelectorAll('[data-tip-title]').forEach((el) => {
+  el.addEventListener('mouseenter', () => showTooltip(el));
+  el.addEventListener('mouseleave', () => { if (tooltipTarget === el) hideTooltip(); });
+  // The click itself is the feedback; keep the bubble out of the way.
+  el.addEventListener('click', hideTooltip);
+});
+
+// ── Smart stroke toggles ──────────────────────────────────
+// Both modes only apply to freehand drawing, so they are revealed for the
+// Draw tool and hidden everywhere else. The flags are left alone when
+// switching tools: coming back to Draw restores the mode you left it in.
+const smartStrokeGroup = document.getElementById('bc-smart');
+const smartStrokeButton = document.getElementById('btn-smart-stroke');
+const smartStroke2Button = document.getElementById('btn-smart-stroke-2');
+
+function syncSmartStrokeButtons() {
+  const onDraw = tool === 'draw';
+  // Collapsing the group (rather than display:none) is what lets the pair
+  // slide in and out; see .bc-smart in styles.css.
+  if (smartStrokeGroup) smartStrokeGroup.classList.toggle('collapsed', !onDraw);
+  if (smartStrokeButton) smartStrokeButton.classList.toggle('is-active', isSmartDrawEnabled);
+  if (smartStroke2Button) smartStroke2Button.classList.toggle('is-active', isSmartDraw2Enabled);
+  // A tooltip left open over a button that is sliding away would hang in mid-air.
+  if (!onDraw) hideTooltip();
+}
+
+// boot() is async (it awaits IndexedDB), so the initial visibility is
+// resolved here instead — the default tool is Draw, which shows the buttons.
+syncSmartStrokeButtons();
+
+function announceSmartMode(message) {
+  statusBar.textContent = message || STATUSES[tool] || '';
+}
+
+function toggleSmartStroke() {
+  isSmartDrawEnabled = !isSmartDrawEnabled;
+  if (isSmartDrawEnabled) isSmartDraw2Enabled = false;
+  syncSmartStrokeButtons();
+  announceSmartMode(isSmartDrawEnabled &&
+    'Smart Stroke ON · Closed shapes snap to circle / rectangle / triangle');
+}
+
+function toggleSmartStroke2() {
+  isSmartDraw2Enabled = !isSmartDraw2Enabled;
+  if (isSmartDraw2Enabled) isSmartDrawEnabled = false;
+  syncSmartStrokeButtons();
+  announceSmartMode(isSmartDraw2Enabled &&
+    'Smart Stroke 2 ON · Straight lines, true arcs, sharp corners');
 }
 
 document.getElementById('brush-size').addEventListener('input', (e) => {
@@ -893,6 +1001,19 @@ function endStroke(worldPoint) {
     const p = strokePoints[0] || worldPoint;
     if (!currentStroke.pts.length) {
       currentStroke.pts.push({ x: p.x, y: p.y, w: computeStrokeWidth(0, brushSize) });
+    }
+  }
+
+  // Smart stroke: rewrite the raw points into a refined path *before* the
+  // stroke is committed, so history, undo and the eraser only ever see the
+  // finished geometry. It stays a plain 'stroke' object either way.
+  if (!currentStroke.isErase && currentStroke.pts.length > 1) {
+    if (isSmartDrawEnabled) {
+      const shapeType = classifyStroke(currentStroke.pts);
+      currentStroke.pts = refineStroke(currentStroke.pts, shapeType);
+      statusBar.textContent = `Smart Stroke ON · detected: ${shapeType}`;
+    } else if (isSmartDraw2Enabled) {
+      currentStroke.pts = refinePrecision(currentStroke.pts);
     }
   }
 
@@ -1358,6 +1479,16 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 't') setTool('text');
   if (e.key === 'p') setTool('pan');
 
+  // Smart stroke modes are Draw-tool only; the shortcuts are inert elsewhere.
+  if (e.key === 's' && tool === 'draw') {
+    toggleSmartStroke();
+    bcFlashButton('btn-smart-stroke');
+  }
+  if (e.key === 'S' && tool === 'draw') {
+    toggleSmartStroke2();
+    bcFlashButton('btn-smart-stroke-2');
+  }
+
   // Select tool: Delete / Backspace removes the selected object
   if ((e.key === 'Delete' || e.key === 'Backspace') && tool === 'select' && selectedIndex !== -1) {
     e.preventDefault();
@@ -1428,6 +1559,7 @@ function bcSetExpanded(expanded) {
   if (expanded === bcExpanded) return;
   bcExpanded = expanded;
   bcSecondary.classList.toggle('collapsed', !expanded);
+  if (!expanded) hideTooltip(); // don't leave a bubble pointing at a hidden button
 }
 
 // Returns true if the user is actively interacting with the canvas
@@ -1503,6 +1635,7 @@ document.addEventListener('mousemove', (e) => {
 canvas.addEventListener('pointerdown', () => {
   if (bcCollapseTimer) { clearTimeout(bcCollapseTimer); bcCollapseTimer = null; }
   bcSetExpanded(false);
+  hideTooltip();
 }, { capture: true, passive: true });
 
 // ── Reset ─────────────────────────────────────────────────
