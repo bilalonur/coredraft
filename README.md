@@ -48,8 +48,8 @@ A minimal, distraction-free drawing canvas for quick sketches, diagrams, and min
   palettes and saved with the canvas; a fourth pushes out the oldest
 - **Dark / Light mode**
 - **Undo / Redo** with full history
-- **Auto-save** — the whole canvas (objects, viewport, theme, name) is stored in IndexedDB and restored
-  automatically after a refresh, tab close, or crash
+- **Auto-save** — the whole canvas (objects, viewport, theme, name, custom colours) is stored in IndexedDB
+  and restored automatically after a refresh, tab close, or crash
 - **Canvas info card** — name your canvas and see when you started it
 - **Paste images** directly from clipboard (Ctrl+V)
 - **Export** to PNG or PDF
@@ -83,7 +83,30 @@ node tests/markdown.test.js
 | Drop a `.md` / `.txt` file | Add it as a sticky note at the drop point |
 | `←` `→` `↑` `↓` (select tool) | Nudge selection by 1px — hold `Shift` for 10px |
 | `Delete` / `Backspace` (select tool) | Delete selection |
-| `Esc` | Finish text editing / close menus |
+| `Esc` | Finish text editing · close the colour picker, a menu, or the note editor |
+
+## Markdown in sticky notes
+
+The parser is deliberately small — it covers what a note needs and nothing more:
+
+| Syntax | Result |
+|---|---|
+| `# Heading` … `### Heading` | Headings; `####`–`######` render like `###`, and seven hashes is plain text |
+| `- item`, `* item`, `+ item` | Bullet list — two spaces of indent nests it, up to 3 levels |
+| `- [ ] todo`, `- [x] done` | Task box. Click it on the canvas to tick it off; two or more get a progress meter |
+| `1. item`, `1) item` | Numbered list |
+| `> quoted` | Blockquote |
+| `---`, `***`, `___` | Horizontal rule |
+| `**bold**`, `*italic*`, `***both***` | Emphasis, including nested (`**bold with *italic* inside**`) |
+| `` `code` `` | Inline code — its contents are never re-parsed |
+| `[label](url)`, bare `https://…` | Link. Click it with the Select tool to open it in a new tab |
+
+Two deliberate departures from full Markdown:
+
+- **Underscores are never emphasis.** `snake_case` is far more common in a sketching tool than `_italics_`,
+  and silently italicising half an identifier is the worse bug.
+- **One source line is one block.** Lines are never joined into paragraphs, so the note keeps the shape you
+  typed; a line longer than the pad wraps to its width, with list items hanging under their own first line.
 
 ## License
 
