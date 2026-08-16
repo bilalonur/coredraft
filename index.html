@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>coredraft</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Balsamiq+Sans:wght@400;700&family=Fira+Code:wght@400;700&family=Inter:wght@400;700&family=Merriweather:wght@400;700&family=Poppins:wght@400;900&display=swap" rel="stylesheet">
 </head>
 <body>
 
@@ -19,6 +22,9 @@
 
   <!-- Drawing tools -->
   <div class="toolbar-group">
+    <button class="toolbar-button" id="tool-select" onclick="setTool('select')" title="Select / Move [V]">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>Select
+    </button>
     <button class="toolbar-button on" id="tool-draw" onclick="setTool('draw')" title="Draw [D]">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.71 4.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>Draw
     </button>
@@ -66,31 +72,19 @@
     <select id="font-family" onchange="updateTextStyle()">
       <option value="'Courier New',monospace">Mono</option>
       <option value="Arial,sans-serif">Arial</option>
+      <option value="'Inter',sans-serif">Inter</option>
+      <option value="'Balsamiq Sans',cursive">Balsamiq</option>
+      <option value="'Merriweather',serif">Merriweather</option>
+      <option value="'Fira Code',monospace">Fira Code</option>
+      <option value="'Poppins',sans-serif">Poppins</option>
     </select>
     <input type="number" id="font-size" value="18" min="8" max="120" onchange="updateTextStyle()">
     <button class="toolbar-button" id="bold-button" onclick="toggleBold()" style="font-weight:700">B</button>
     <button class="toolbar-button" id="italic-button" onclick="toggleItalic()" style="font-style:italic">I</button>
   </div>
 
-  <!-- Undo / Redo -->
-  <div class="toolbar-group">
-    <button class="toolbar-button undo-redo-button" id="undo-button" onclick="undo()" title="Undo [Ctrl+Z]" disabled>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 7v6h6"/><path d="M3 13C5 7.5 10 4 15.5 4A9 9 0 0 1 21 19.5"/>
-      </svg>
-    </button>
-    <button class="toolbar-button undo-redo-button" id="redo-button" onclick="redo()" title="Redo [Ctrl+Y / Ctrl+Shift+Z]" disabled>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 7v6h-6"/><path d="M21 13C19 7.5 14 4 8.5 4A9 9 0 0 0 3 19.5"/>
-      </svg>
-    </button>
-  </div>
-
   <!-- Actions -->
   <div class="toolbar-group">
-    <button class="toolbar-button" onclick="toggleTheme()" title="Dark/Light">
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.33 5.33 0 0 1-5.3-5.3 5.39 5.39 0 0 1 2.26-4.4C13 3.04 12.54 3 12 3z"/></svg>Mode
-    </button>
     <button class="action-button reset" onclick="resetCanvas()">Reset</button>
     <div class="export-dropdown">
       <button class="action-button export" id="export-toggle" onclick="toggleExportMenu(event)">
@@ -120,12 +114,141 @@
 <div id="canvas-wrap"><canvas id="canvas"></canvas></div>
 <textarea id="text-input" spellcheck="false"></textarea>
 <div id="status-bar">Draw · Paste images with Ctrl+V</div>
-<div id="zoom-controls">
-  <button onclick="adjustZoom(-0.15)">−</button>
-  <div id="zoom-level">100%</div>
-  <button onclick="adjustZoom(+0.15)">+</button>
+<div id="bottom-controls">
+  <!-- Primary group: always visible -->
+  <div class="bc-group bc-primary">
+    <button onclick="adjustZoom(-0.15)" title="Zoom out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div id="zoom-level">100%</div>
+    <button onclick="adjustZoom(+0.15)" title="Zoom in">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </div>
+  <!-- Secondary group: hidden during drawing, expands on proximity -->
+  <div class="bc-group bc-secondary" id="bc-secondary">
+    <div class="bc-separator"></div>
+    <button id="undo-button" onclick="undo()" title="Undo [Ctrl+Z]" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 7v6h6"/><path d="M3 13C5 7.5 10 4 15.5 4A9 9 0 0 1 21 19.5"/>
+      </svg>
+    </button>
+    <button id="redo-button" onclick="redo()" title="Redo [Ctrl+Y / Ctrl+Shift+Z]" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 7v6h-6"/><path d="M21 13C19 7.5 14 4 8.5 4A9 9 0 0 0 3 19.5"/>
+      </svg>
+    </button>
+    <!-- Draw-tool only: slides in and out with the tool, as one group so the
+         separator never strands itself next to another one. -->
+    <div class="bc-swap bc-smart" id="bc-smart">
+      <div class="bc-separator"></div>
+      <!-- Shape snap: a closed outline pinned to its anchor points -->
+      <button id="btn-smart-stroke" class="ctrl-btn" onclick="toggleSmartStroke()"
+              aria-label="Smart Stroke"
+              data-tip-title="Smart Stroke" data-tip-key="S"
+              data-tip-body="Snaps a closed stroke to a perfect circle, rectangle or triangle. Anything else is smoothed to take out hand jitter.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="7"/>
+          <rect x="10.55" y="3.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="17.55" y="10.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="10.55" y="17.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="3.55" y="10.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <!-- Precision: an open path whose every segment is exact -->
+      <button id="btn-smart-stroke-2" class="ctrl-btn" onclick="toggleSmartStroke2()"
+              aria-label="Smart Stroke 2"
+              data-tip-title="Smart Stroke 2" data-tip-key="Shift+S"
+              data-tip-body="Rebuilds any stroke from exact pieces: straight runs become true lines, curves become true arcs, corners stay sharp. Built for letters and diagrams.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4,18 10,8 15,14 20,5"/>
+          <rect x="2.55" y="16.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="8.55" y="6.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="13.55" y="12.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+          <rect x="18.55" y="3.55" width="2.9" height="2.9" rx="0.6" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+    </div>
+    <!-- Text-tool only: opens the Markdown sticky-note editor. Ships
+         collapsed because Draw is the default tool. -->
+    <div class="bc-swap bc-sticky collapsed" id="bc-sticky">
+      <div class="bc-separator"></div>
+      <button id="btn-sticky-note" class="ctrl-btn" onclick="openStickyEditor(-1)"
+              aria-label="New sticky note"
+              data-tip-title="Sticky Note" data-tip-key="N"
+              data-tip-body="A coloured pad that renders Markdown on the canvas: headings, lists, quotes, bold, italic and code. Double-click one to edit it, or drop a .md file anywhere.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h16v10.5L14.5 20H4z"/>
+          <path d="M20 14.5h-5.5V20"/>
+          <line x1="7.5" y1="8.5" x2="16.5" y2="8.5"/>
+          <line x1="7.5" y1="12" x2="12.5" y2="12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="bc-separator"></div>
+    <button id="theme-toggle" onclick="toggleTheme()" title="Dark/Light">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.33 5.33 0 0 1-5.3-5.3 5.39 5.39 0 0 1 2.26-4.4C13 3.04 12.54 3 12 3z"/></svg>
+    </button>
+  </div>
 </div>
 
+<!-- Markdown sticky-note editor. Hidden until the sticky button, the N key,
+     or a double-click on an existing note opens it. The backdrop div is a
+     styled mirror of the textarea sitting directly behind it; see
+     renderStickyHighlight() in app.js. -->
+<div id="sticky-overlay" class="hidden">
+  <div id="sticky-editor" role="dialog" aria-modal="true" aria-label="Markdown sticky note">
+    <div class="sticky-head">
+      <span class="sticky-title">Sticky note</span>
+      <select id="sticky-font-family" class="sticky-select" aria-label="Note font"
+              onchange="updateStickyFont()">
+        <option value="'Courier New',monospace">Mono</option>
+        <option value="Arial,sans-serif">Arial</option>
+        <option value="'Inter',sans-serif">Inter</option>
+        <option value="'Balsamiq Sans',cursive">Balsamiq</option>
+        <option value="'Merriweather',serif">Merriweather</option>
+        <option value="'Fira Code',monospace">Fira Code</option>
+        <option value="'Poppins',sans-serif">Poppins</option>
+      </select>
+      <input type="number" id="sticky-font-size" class="sticky-size" min="8" max="120"
+             aria-label="Note font size" onchange="updateStickyFont()" oninput="updateStickyFont()">
+      <div class="sticky-swatches" id="sticky-swatches"></div>
+      <button type="button" class="sticky-button" onclick="closeStickyEditor()">Cancel</button>
+      <button type="button" class="sticky-button primary" onclick="commitSticky()">OK</button>
+    </div>
+    <div class="sticky-field" id="sticky-field">
+      <div id="sticky-highlight" aria-hidden="true"></div>
+      <textarea id="sticky-text" spellcheck="false" autocomplete="off"
+                aria-label="Markdown source"></textarea>
+    </div>
+    <div class="sticky-foot">
+      <span class="sticky-syntax"># heading · - list · - [ ] task · [link](url) · &gt; quote · **bold** · *italic* · `code`</span>
+      <span class="sticky-keys">Esc cancel · Ctrl+Enter save</span>
+    </div>
+  </div>
+</div>
+
+<!-- Shared colour picker. One popover serves both the toolbar palette and the
+     sticky-note editor; openColorPicker() in app.js points it at whichever
+     control opened it. -->
+<div id="color-popover" class="hidden" role="dialog" aria-label="Choose a colour">
+  <div class="cp-grid" id="cp-grid"></div>
+  <div class="cp-foot">
+    <label class="cp-custom">
+      <input type="color" id="cp-custom" aria-label="Custom colour">
+      <span>Custom…</span>
+    </label>
+    <span class="cp-hex" id="cp-hex"></span>
+  </div>
+</div>
+
+<!-- Shared hover tooltip. Lives outside #bottom-controls, which clips its
+     overflow for the slide animations, and is positioned with fixed
+     coordinates so it can sit above the bar without being cut off. -->
+<div id="tooltip" role="tooltip" aria-hidden="true"></div>
+
+<script src="geometry.js"></script>
+<script src="markdown.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
