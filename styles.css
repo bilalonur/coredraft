@@ -43,13 +43,13 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  height: 52px;
   background: var(--toolbar-bg);
   border-bottom: 1px solid var(--toolbar-border);
   display: flex;
+  flex-flow: wrap;
   align-items: center;
   gap: 2px;
-  padding: 0 10px;
+  padding: 10px;
   z-index: 100;
   overflow-x: auto;
 }
