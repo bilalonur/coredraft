@@ -521,7 +521,7 @@ function hitTestAny(worldPoint) {
   for (let i = history.length - 1; i >= 0; i--) {
     const obj = history[i];
     if (obj.type === 'stroke') {
-      const tolerance = Math.max(6, brushSize);
+      const tolerance = Math.max(6, getStrokeSize());
       for (const p of obj.pts) {
         const dx = worldPoint.x - p.x;
         const dy = worldPoint.y - p.y;
@@ -680,7 +680,7 @@ let shapeStart = null, shapeEnd = null;
 function drawShapePreview(context) {
   context.save();
   const color = drawColor;
-  const size = brushSize;
+  const size = getStrokeSize();
   const lineWidth = Math.max(1, size * 0.75);
 
   // Dashed preview style
@@ -716,7 +716,7 @@ function drawShapePreview(context) {
 function commitShape() {
   const obj = {
     color: drawColor,
-    size: brushSize,
+    size: getStrokeSize(),
     x1: shapeStart.x,
     y1: shapeStart.y,
     x2: shapeEnd.x,
@@ -934,6 +934,7 @@ renderPalette();
 // ── Tool state ────────────────────────────────────────────
 let tool = 'draw';
 let brushSize = 3;
+let eraserSize = 3;
 let spaceDown = false;
 let middleMouseDown = false;
 let middleMouseStart = null;
@@ -971,6 +972,10 @@ const TOOL_BUTTON_IDS = {
   select: 'tool-select', draw: 'tool-draw', eraser: 'tool-eraser', text: 'tool-text', pan: 'tool-pan',
   arrow: 'tool-arrow', line: 'tool-line', rect: 'tool-rect', circle: 'tool-circle'
 };
+
+function getStrokeSize() {
+  return tool === 'eraser' ? eraserSize : brushSize;
+}
 
 function setTool(t) {
   commitText();
@@ -1099,6 +1104,10 @@ document.getElementById('brush-size').addEventListener('input', (e) => {
   brushSize = +e.target.value;
 });
 
+document.getElementById('eraser-size').addEventListener('input', (e) => {
+  eraserSize = +e.target.value;
+});
+
 // ── Stroke engine ─────────────────────────────────────────
 let strokePoints = [];
 let lastVelocity = 0;
@@ -1113,12 +1122,12 @@ function computeStrokeWidth(velocity, size) {
 
 function startStroke(worldPoint) {
   isDrawing = true;
-  strokePoints = [{ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, brushSize), t: Date.now() }];
+  strokePoints = [{ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, getStrokeSize()), t: Date.now() }];
   lastVelocity = 0;
   currentStroke = {
     type: 'stroke',
     color: drawColor,
-    size: brushSize,
+    size: getStrokeSize(),
     isErase: tool === 'eraser',
     pts: strokePoints
   };
@@ -1153,7 +1162,7 @@ function continueStroke(worldPoint) {
   const dy = worldPoint.y - prev.y;
   const velocity = Math.sqrt(dx * dx + dy * dy) / Math.max(1, Date.now() - prev.t) * 10;
   lastVelocity = lastVelocity * 0.5 + velocity * 0.5;
-  strokePoints.push({ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(lastVelocity, brushSize), t: Date.now() });
+  strokePoints.push({ x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(lastVelocity, getStrokeSize()), t: Date.now() });
 
   if (tool === 'eraser') {
     // Apply eraser incrementally: only the latest point so erasing is visible live
@@ -1200,7 +1209,7 @@ function endStroke(worldPoint) {
   if (strokePoints.length <= 1) {
     const p = strokePoints[0] || worldPoint;
     if (!currentStroke.pts.length) {
-      currentStroke.pts.push({ x: p.x, y: p.y, w: computeStrokeWidth(0, brushSize) });
+      currentStroke.pts.push({ x: p.x, y: p.y, w: computeStrokeWidth(0, getStrokeSize()) });
     }
   }
 
@@ -2711,7 +2720,7 @@ canvas.addEventListener('mousemove', (e) => {
   if ((tool === 'draw' || tool === 'eraser') && isDrawing) continueStroke(worldPoint);
   if (tool === 'eraser' && !isDrawing) {
     // Track the hover point so renderFrame() draws the eraser cursor
-    eraserHoverPoint = { x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, brushSize) };
+    eraserHoverPoint = { x: worldPoint.x, y: worldPoint.y, w: computeStrokeWidth(0, eraserSize) };
     fullRedraw();
   }
   if (SHAPE_TOOLS.has(tool) && shapeStart) {

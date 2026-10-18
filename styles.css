@@ -233,7 +233,7 @@ html, body {
 
 /* ── Brush size slider ───────────────────────────────── */
 
-#brush-size {
+#brush-size, #eraser-size {
   -webkit-appearance: none;
   width: 64px;
   height: 3px;
@@ -244,7 +244,7 @@ html, body {
   flex-shrink: 0;
 }
 
-#brush-size::-webkit-slider-thumb {
+#brush-size::-webkit-slider-thumb, #eraser-size::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 12px;
   height: 12px;
